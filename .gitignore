@@ -1,0 +1,38 @@
+# Secrets — never commit real credentials. Keep .env.example tracked.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Python virtual environments (uv creates backend/.venv)
+.venv/
+venv/
+env/
+
+# Node (future dashboard)
+node_modules/
+dist/
+build/
+.vite/
+
+# Docker
+*.pid
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Claude Code local-only settings (personal permissions, not shared config)
+.claude/settings.local.json
