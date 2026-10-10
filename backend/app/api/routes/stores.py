@@ -4,16 +4,18 @@ IMPLEMENTATION.md for what a real Create Store Service will do instead.
 """
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
-from app.deps import get_current_user, require_admin, user_rate_limit
-from app.models import Role, Store, StoreMember, StoreStatus, User
-from app.schemas import AssignMemberRequest, CreateStoreRequest, StoreMemberOut, StoreOut, UserOut
-from app.utils import unique_slug
+from app.core.deps import get_current_user, require_admin, user_rate_limit
+from app.db.models import Role, Store, StoreMember, StoreStatus, User
+from app.db.session import get_db
+from app.schemas.auth import UserOut
+from app.schemas.stores import AssignMemberRequest, CreateStoreRequest, StoreMemberOut, StoreOut
+from app.services.mailer import notice_email, send_email
+from app.services.stores import store_for_member, unique_slug
 
 router = APIRouter(
     prefix="/stores",
@@ -59,20 +61,16 @@ async def list_stores(
 ) -> list[Store]:
     if user.role == Role.admin:
         result = await db.execute(select(Store).order_by(Store.created_at))
-    else:
-        result = await db.execute(
-            select(Store)
-            .join(StoreMember, StoreMember.store_id == Store.id)
-            .where(StoreMember.user_id == user.id)
-            .order_by(Store.created_at)
-        )
-    return list(result.scalars().all())
+        return list(result.scalars().all())
+    store = await store_for_member(db, user.id)
+    return [store] if store else []
 
 
 @router.post("/{store_id}/members", response_model=StoreMemberOut, status_code=status.HTTP_201_CREATED)
 async def assign_member(
     store_id: uuid.UUID,
     body: AssignMemberRequest,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> StoreMember:
@@ -81,8 +79,10 @@ async def assign_member(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Store not found")
 
     member = await db.get(User, body.user_id)
-    if not member:
+    if not member or not member.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if member.role == Role.admin:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The admin already has access to every store")
 
     assignment = StoreMember(store_id=store_id, user_id=body.user_id)
     db.add(assignment)
@@ -90,9 +90,46 @@ async def assign_member(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "Member already assigned to store") from exc
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Member already belongs to a store — remove them from it first"
+        ) from exc
     await db.refresh(assignment)
+
+    background.add_task(
+        send_email,
+        member.email,
+        *notice_email(member.name, "You were added to a Urumi store", f"An admin gave you access to the store \"{store.name}\" ({store.url})."),
+    )
     return assignment
+
+
+@router.delete("/{store_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_member(
+    store_id: uuid.UUID,
+    user_id: uuid.UUID,
+    background: BackgroundTasks,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Takes effect immediately: the member's chat session and gateway API key
+    lose access to the store on their next call (see store_for_member).
+    """
+    result = await db.execute(
+        select(StoreMember).where(StoreMember.store_id == store_id, StoreMember.user_id == user_id)
+    )
+    assignment = result.scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Member is not assigned to this store")
+    await db.delete(assignment)
+    await db.commit()
+
+    member, store = await db.get(User, user_id), await db.get(Store, store_id)
+    if member and store:
+        background.add_task(
+            send_email,
+            member.email,
+            *notice_email(member.name, "You were removed from a Urumi store", f"An admin removed your access to the store \"{store.name}\"."),
+        )
 
 
 @router.get("/{store_id}/members", response_model=list[UserOut])

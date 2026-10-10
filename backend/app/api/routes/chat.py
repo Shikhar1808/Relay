@@ -10,17 +10,18 @@ user to the gateway.
 """
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
-from app.database import get_db
-from app.deps import get_current_user, get_redis, user_rate_limit
-from app.models import ChatToken, User
-from app.schemas import ChatMessageRequest, ChatReplyOut
-from app.security import generate_chat_token
+from app.core.config import settings
+from app.core.deps import get_current_user, get_redis, user_rate_limit
+from app.core.security import generate_chat_token
+from app.db.models import ChatToken, Role, Store, User
+from app.db.session import get_db
+from app.schemas.chat import ChatMessageRequest, ChatReplyOut
+from app.services.stores import store_for_member
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -63,9 +64,10 @@ async def _get_or_create_chat_token(user: User, db: AsyncSession, redis: Redis) 
     return token
 
 
-def _demo_agent_reply(message: str) -> str:
+def _demo_agent_reply(message: str, store: Store | None) -> str:
+    scope = f'store "{store.name}"' if store else "all stores (admin)"
     return (
-        f'[demo agent] Received: "{message}". '
+        f'[demo agent, scoped to {scope}] Received: "{message}". '
         "This stub does not call a real LLM or the MCP Gateway yet — it only "
         "proves the short_chat_token is minted and attached to your session. "
         "LiteLLM + MCP Gateway tool-calling replaces this in a later phase."
@@ -79,6 +81,14 @@ async def chat_message(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> ChatReplyOut:
+    # The store is decided here, server-side, from the logged-in user — never
+    # from the message text. The real agent must hand the LLM only this
+    # store's data; its gateway calls are scoped the same way, independently,
+    # by /internal/auth/resolve.
+    store = None if user.role == Role.admin else await store_for_member(db, user.id)
+    if user.role != Role.admin and store is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You are not assigned to a store yet")
+
     token = await _get_or_create_chat_token(user, db, redis)
-    reply = _demo_agent_reply(body.message)
-    return ChatReplyOut(reply=reply, chat_token_expires_at=token.expires_at)
+    reply = _demo_agent_reply(body.message, store)
+    return ChatReplyOut(reply=reply, chat_token_expires_at=token.expires_at, store_id=store.id if store else None)

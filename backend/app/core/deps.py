@@ -16,11 +16,11 @@ from redis.asyncio import Redis, from_url
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
-from app.database import get_db
-from app.models import Role, User
-from app.rate_limit import check_token_bucket
-from app.security import decode_access_token
+from app.core.config import settings
+from app.core.rate_limit import check_token_bucket
+from app.core.security import decode_access_token
+from app.db.models import Role, User
+from app.db.session import get_db
 
 _bearer = HTTPBearer()
 _redis_client: Redis = from_url(settings.redis_url, decode_responses=True)

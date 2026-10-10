@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 
-from app.config import settings
+from app.core.config import settings
 
 JWT_ALGORITHM = "HS256"
 
@@ -62,8 +62,9 @@ def generate_chat_token() -> tuple[str, str]:
 
 
 def generate_temp_password() -> str:
-    """Used when an admin creates a member account. No email delivery exists
-    yet, so the raw value is returned once in the API response for the admin
-    to share out-of-band. See IMPLEMENTATION.md for this documented shortcut.
+    """Used when an admin creates a member account. Returned once in the API
+    response for the admin to share out-of-band; the member is also emailed
+    a set-password link (app/services/mailer.py), so this is a fallback, kept while
+    there is no dashboard to drive the invite flow.
     """
     return secrets.token_urlsafe(12)

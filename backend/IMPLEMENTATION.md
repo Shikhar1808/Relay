@@ -10,11 +10,15 @@ A FastAPI + PostgreSQL + Redis backend covering:
 - Admin and team-member authentication (dashboard JWT), with strict RBAC
 - Exactly one admin account, enforced at the database level — see "RBAC"
 - Admin-managed team: create/list/deactivate members
+- Email over SMTP (Resend by default): member invites, password reset, and
+  account notices — see "Email and passwords"
+- Password change (logged in) and emailed single-use set-password links
 - Gateway API key lifecycle: admin can issue/revoke any member's key; a
   member can self-service their own (one active key per user, enforced in
   the DB, not just the route)
 - Store creation — **stub only**, returns a fake URL (see "What's a stub" below)
-- Assigning members to stores
+- Assigning members to stores, one store per member, with chat and the
+  gateway token-resolve scoped to that store
 - A demo chat agent that mints short-lived chat tokens server-side (one
   session reused per user, not one per message)
 - An internal token-resolve endpoint the future MCP Gateway will call
@@ -44,7 +48,8 @@ There are exactly two roles, and exactly one admin account can ever exist.
 **Member can:**
 - Log in, use the chat agent (one session token, reused across messages —
   see "known race" below for the one edge case)
-- See only the stores they're assigned to
+- See only the one store they're assigned to — in the dashboard, in chat,
+  and through any MCP client (see "Stores and members")
 - Issue, list, and revoke **their own** gateway API key — never anyone
   else's (the self-service routes take no user-id path parameter; identity
   comes from the JWT, so there's no id to substitute for an IDOR attempt)
@@ -61,7 +66,7 @@ There are exactly two roles, and exactly one admin account can ever exist.
 ### How the single admin is created
 
 Two entry points, same guarded helper (`create_admin_if_absent` in
-`app/bootstrap.py`), same invariant — at most one admin, ever:
+`app/services/bootstrap.py`), same invariant — at most one admin, ever:
 
 1. **Env vars** (`ADMIN_EMAIL` + `ADMIN_PASSWORD` in `.env`): created
    automatically on startup, before the app accepts any HTTP traffic
@@ -74,6 +79,117 @@ Two entry points, same guarded helper (`create_admin_if_absent` in
 Leave `ADMIN_EMAIL`/`ADMIN_PASSWORD` blank in `.env` to disable path 1 and
 force the explicit signup flow instead.
 
+## Stores and members: one store each, and how scoping works
+
+A member belongs to **at most one store**. This is a database rule
+(`UNIQUE (user_id)` on `store_members`), not just a route check. Adding a
+member who is already in a store returns 409; to move someone, remove them
+(`DELETE /stores/{id}/members/{user_id}`) and assign them again. The admin
+is never assigned to a store (400) — the admin can act on every store.
+
+Everything that shows a member store data asks one function,
+`store_for_member` in `app/services/stores.py`, which reads the database fresh each
+time. So a move or removal takes effect on the member's very next request,
+including for a chat session or API key issued earlier.
+
+| Where a member could see store data | How it is limited to their store |
+|---|---|
+| Dashboard: `GET /stores` | Returns their one store, or `[]` |
+| Chat: `POST /chat/message` | The store is taken from the logged-in user, never from the message. A member with no store gets 403 |
+| Any MCP client (Claude Code, Cursor, the chat agent) through the gateway | `/internal/auth/resolve` returns `store_id` for the API key or chat token. A member with no store gets `store_id: null` |
+
+**What is NOT enforced yet, because it does not exist yet:**
+
+- The MCP Gateway. When it is built it must take the store from
+  `store_id` in the resolve response and nothing else — never from a tool
+  argument, a header, or anything the LLM wrote — and must refuse a member
+  whose `store_id` is null. This backend only supplies the answer; the
+  gateway is what has to obey it.
+- The real chat agent. `_demo_agent_reply` is a stub. The real one must put
+  only that one store's data into the LLM prompt and tool results.
+
+## Database migrations
+
+The schema is managed by Alembic. `app/db/models/` describes the tables;
+the files in `backend/migrations/versions/` are what actually change a
+database. The backend container runs `alembic upgrade head` before it
+starts serving, so `docker compose up -d --build` applies anything pending.
+If a migration fails, the container exits instead of serving.
+
+**Changing the schema**
+
+1. Edit `app/db/models/`.
+2. Put `DATABASE_URL` (pointing at `localhost:5432`) and `JWT_SECRET` in
+   `backend/.env`, so Alembic can reach the dev database from your machine.
+3. From `backend/`: `uv run alembic revision --autogenerate -m "what changed"`
+4. **Read the generated file.** Autogenerate misses some things: it does
+   not drop enum types, it cannot tell a rename from a drop-and-add (which
+   loses the data), and a new NOT NULL column or unique rule fails on
+   existing rows unless you handle them in the migration.
+5. `docker compose up -d --build backend` applies it. Commit the migration
+   with the model change.
+
+Other commands, all from `backend/`: `uv run alembic current` (where this
+database is), `uv run alembic check` (do the models and migrations agree),
+`uv run alembic downgrade -1` (undo the last one).
+
+**A database created before Alembic** (by the old `create_all` on startup)
+already has the tables, so the baseline would fail on it. Bring it to the
+baseline schema, then mark it as done, once:
+
+```
+ALTER TABLE store_members ADD CONSTRAINT uq_store_members_one_store_per_user UNIQUE (user_id);
+ALTER TABLE store_members DROP CONSTRAINT uq_store_member;
+```
+
+then `uv run alembic stamp 0001`. The first statement fails if a member is
+in two stores — fix that data first. A fresh database needs none of this.
+
+## Email and passwords
+
+`app/services/mailer.py` sends plain-text email with stdlib `smtplib` (no SDK). The
+defaults in `app/core/config.py` point at Resend's SMTP relay, so the only thing
+to set is `SMTP_PASSWORD` — your Resend API key — in the repo-root `.env`.
+
+- **`SMTP_PASSWORD` unset (dev default):** nothing is sent. Each email,
+  including its set-password link, is written to the backend log
+  (`docker compose logs backend`). Never deploy like this.
+- **Default sender `onboarding@resend.dev`:** Resend only delivers this to
+  the address that owns the Resend account. To email real team members,
+  verify a domain in Resend and set `SMTP_FROM` to an address on it.
+- Sending runs in a FastAPI background task after the response, so a slow
+  or failing mail server never fails a request. A failed send is logged and
+  dropped — there is no retry queue. `resend-invite` and `forgot-password`
+  are the recovery paths.
+
+**Set-password links.** Invites and resets are the same mechanism
+(`app/services/auth_tokens.py`, table `auth_tokens`): a random token is emailed, only
+its SHA-256 is stored, and `POST /auth/set-password` redeems it with one
+`DELETE ... RETURNING`, which is what makes it single-use under concurrent
+requests. Invite links last 72 hours, reset links 30 minutes. Issuing a new
+link replaces the previous one of the same kind, and any password change
+deletes all of the user's outstanding links.
+
+There is no dashboard yet, so links point at this API
+(`APP_BASE_URL/auth/set-password#token=...`), which serves a minimal HTML
+form. The token sits after `#` so the browser never sends it to the server
+and it stays out of access logs. When the dashboard exists, point `APP_BASE_URL` at it and delete
+`set_password_page` from `app/api/routes/auth.py`.
+
+**Who gets emailed, and when:**
+
+| Event | Recipient |
+|---|---|
+| Admin creates a member, or resends the invite | the member (set-password link) |
+| `POST /auth/forgot-password` for an active account | that user (reset link) |
+| Password changed (by change, invite, or reset) | that user |
+| Admin deactivates a member | the member |
+| Admin issues or revokes a member's API key | the member (never the key itself) |
+| Admin assigns a member to a store, or removes them | the member |
+
+`POST /team/members` still returns the temporary password as well, as a
+fallback while there is no dashboard. Drop it once invites are trusted.
+
 ## Three credential types in this codebase
 
 This project has three distinct bearer-token concepts. Confusing them is the
@@ -81,9 +197,9 @@ most common mistake when reading the code, so here's the map:
 
 | Credential | Issued by | Used for | Lives in |
 |---|---|---|---|
-| Dashboard session JWT | `/auth/login` | Browser → this API (dashboard, team mgmt, chat) | `app/security.py: create_access_token` |
-| Gateway API key (`umk_...`) | Admin (for a member) via `/team/members/{id}/api-keys`, or a member for themself via `/team/me/api-keys` | A member's MCP client (Claude Code, Cursor) → the future Gateway | `app/models.py: ApiKey` (hash only) |
-| Short chat token (`chat_...`) | This backend, automatically, on `/chat/message` | This backend → the future Gateway, on behalf of a chat session | `app/models.py: ChatToken` (hash only) + Redis |
+| Dashboard session JWT | `/auth/login` | Browser → this API (dashboard, team mgmt, chat) | `app/core/security.py: create_access_token` |
+| Gateway API key (`umk_...`) | Admin (for a member) via `/team/members/{id}/api-keys`, or a member for themself via `/team/me/api-keys` | A member's MCP client (Claude Code, Cursor) → the future Gateway | `app/db/models/api_key.py: ApiKey` (hash only) |
+| Short chat token (`chat_...`) | This backend, automatically, on `/chat/message` | This backend → the future Gateway, on behalf of a chat session | `app/db/models/tokens.py: ChatToken` (hash only) + Redis |
 
 The gateway API key and chat token are **never** returned to the browser
 after their one-time creation response — only their SHA-256 hash is stored.
@@ -95,25 +211,41 @@ gateway) turns either one into a user identity.
 ```
 backend/
   app/
-    config.py        Settings from env vars (pydantic-settings)
-    database.py       Async SQLAlchemy engine + session dependency
-    models.py          ORM tables: User, ApiKey, Store, StoreMember, ChatToken
-    schemas.py           Pydantic request/response models (password bounds here)
-    security.py            Password hashing (bcrypt directly), JWT, key/token generation
-    rate_limit.py            Redis token-bucket primitive (see below)
-    deps.py                   FastAPI dependencies: auth, admin gate, rate limits
-    utils.py                   Store slug generation
-    bootstrap.py                 Single-admin creation, shared by startup + signup route
-    main.py                       App wiring: lifespan, CORS, routers, /health
-    routers/
-      auth.py                       POST /auth/login, /auth/admin/signup, GET /auth/me
-      team.py                        Member CRUD + admin and self-service API key routes
-      stores.py                       Store create (stub) + member assignment
-      chat.py                          Demo chat agent + chat token minting
-      internal.py                       POST /internal/auth/resolve
+    main.py              App wiring: lifespan, CORS, routers, /health
+    core/                Cross-cutting plumbing, no business rules
+      config.py            Settings from env vars (pydantic-settings)
+      security.py          Password hashing (bcrypt directly), JWT, key/token generation
+      rate_limit.py        Redis token-bucket primitive (see below)
+      deps.py              FastAPI dependencies: auth, admin gate, rate limits
+    db/
+      session.py           Async SQLAlchemy engine + session dependency
+      models/              ORM tables; import them from `app.db.models`
+        base.py              Declarative Base
+        user.py              User, Role
+        api_key.py           ApiKey
+        store.py             Store, StoreMember, StoreStatus
+        tokens.py            AuthToken, TokenPurpose, ChatToken
+    schemas/             Pydantic request/response models, one file per route file
+      auth.py              Login, signup, password schemas; the Password rule; UserOut
+      team.py              Member and API key schemas
+      stores.py  chat.py  internal.py
+    services/            Logic shared by more than one route
+      bootstrap.py         Single-admin creation, shared by startup + signup route
+      mailer.py            SMTP sender + plain-text email templates
+      auth_tokens.py       Issue/redeem single-use invite and reset tokens
+      stores.py            Store slug generation; store_for_member (the scoping rule)
+    api/
+      routes/
+        auth.py            Login, admin signup, /auth/me, change/forgot/set password
+        team.py            Member CRUD + admin and self-service API key routes
+        stores.py          Store create (stub) + member assignment
+        chat.py            Demo chat agent + chat token minting
+        internal.py        POST /internal/auth/resolve
   scripts/
     smoke_test.py                       End-to-end check against a live stack
-  Dockerfile
+  migrations/                           Alembic: env.py + one file per schema change
+  alembic.ini
+  Dockerfile                            Runs `alembic upgrade head`, then uvicorn
   pyproject.toml / uv.lock                Dependencies, managed with uv
 ```
 
@@ -125,7 +257,12 @@ backend/
 | POST | `/auth/login` | none | IP, 5/min | Returns a dashboard JWT |
 | POST | `/auth/admin/signup` | none | IP, 5/min | Creates the one admin; 409 if one already exists |
 | GET | `/auth/me` | JWT | user, 60/min | Current user identity |
-| POST | `/team/members` | JWT (admin) | user, 60/min | Creates a member, returns a one-time temp password |
+| POST | `/auth/change-password` | JWT | IP, 5/min | Changes own password; 400 if the current one is wrong |
+| POST | `/auth/forgot-password` | none | IP, 5/min | Emails a reset link; identical 202 whether or not the email exists |
+| GET | `/auth/set-password` | none | none | HTML form for the emailed link (stand-in for the dashboard) |
+| POST | `/auth/set-password` | none | IP, 5/min | Redeems an invite/reset token, sets the password, returns a JWT; 400 if invalid, used, or expired |
+| POST | `/team/members` | JWT (admin) | user, 60/min | Creates a member, emails an invite link, returns a one-time temp password |
+| POST | `/team/members/{id}/resend-invite` | JWT (admin) | user, 60/min | Emails a fresh invite link; the old one stops working |
 | GET | `/team/members` | JWT (admin) | user, 60/min | Lists all users |
 | DELETE | `/team/members/{id}` | JWT (admin) | user, 60/min | Deactivates a member; 409 if target is the admin |
 | POST | `/team/members/{id}/api-keys` | JWT (admin) | user, 60/min | Issues a key for that member; 409 if they already have an active one |
@@ -135,15 +272,16 @@ backend/
 | GET | `/team/me/api-keys` | JWT | user, 60/min | List own keys |
 | POST | `/team/me/api-keys/{key_id}/revoke` | JWT | user, 60/min | Revoke own key; 404 if the id belongs to someone else |
 | POST | `/stores` | JWT (admin) | user, 60/min | **Stub.** Creates a DB row, returns a fake URL |
-| GET | `/stores` | JWT | user, 60/min | Admin sees all stores; member sees only assigned stores |
-| POST | `/stores/{id}/members` | JWT (admin) | user, 60/min | Assigns a member to a store |
+| GET | `/stores` | JWT | user, 60/min | Admin sees all stores; member sees only their one store |
+| POST | `/stores/{id}/members` | JWT (admin) | user, 60/min | Assigns a member to a store; 409 if they already belong to one, 400 for the admin |
+| DELETE | `/stores/{id}/members/{user_id}` | JWT (admin) | user, 60/min | Removes a member from a store, effective immediately |
 | GET | `/stores/{id}/members` | JWT (admin) | user, 60/min | Lists a store's assigned members |
-| POST | `/chat/message` | JWT | user, 10/min | Demo agent reply; mints/reuses a short_chat_token |
-| POST | `/internal/auth/resolve` | none (internal) | none | Resolves an API key or chat token to a user identity |
+| POST | `/chat/message` | JWT | user, 10/min | Demo agent reply scoped to the caller's store; mints/reuses a short_chat_token; 403 for a member with no store |
+| POST | `/internal/auth/resolve` | none (internal) | none | Resolves an API key or chat token to a user identity and the one store they may touch |
 
 ## Rate limiting: why token bucket
 
-Implemented in `app/rate_limit.py` as a single Redis Lua script (atomic
+Implemented in `app/core/rate_limit.py` as a single Redis Lua script (atomic
 read-refill-decrement — without atomicity, two concurrent requests could
 both read "1 token left" and both proceed).
 
@@ -161,9 +299,11 @@ shape this API actually sees. It's the same family of algorithm used by
 Stripe/GitHub/AWS API gateways.
 
 Buckets in use:
-- Login and admin signup: 5 capacity, refills 5/min, keyed by client IP
-  (brute-force guard, applies even to failed attempts since the dependency
-  runs before the route body)
+- Login, admin signup, and change/forgot/set password: 5 capacity, refills
+  5/min, keyed by client IP and path (brute-force guard, applies even to
+  failed attempts since the dependency runs before the route body).
+  `forgot-password` is limited per IP only, not per target address, so one
+  client can still send a victim up to 5 reset emails a minute.
 - General authenticated routes: 60 capacity, refills 60/min, keyed by user id
 - Chat message: 10 capacity, refills 10/min, keyed by user id (stricter —
   this is the route that will eventually cost an LLM call)
@@ -188,9 +328,9 @@ turns into a clean `409` instead of a `500`:
 - Member email uniqueness (`users.email` is `UNIQUE`) — `team.py: create_member`
 - Store slug uniqueness (`stores.slug` is `UNIQUE`) — `stores.py: create_store`
   retries up to 3 times with a fresh slug before giving up
-- Store-member assignment (`UniqueConstraint(store_id, user_id)`) — `stores.py: assign_member`
+- One store per member (`UniqueConstraint(user_id)` on `store_members`) — `stores.py: assign_member`
 - **One active API key per user** — a partial unique index,
-  `UNIQUE (user_id) WHERE NOT revoked`, on `api_keys` (`app/models.py`).
+  `UNIQUE (user_id) WHERE NOT revoked`, on `api_keys` (`app/db/models/api_key.py`).
   This is enforced at the DB level, not just the application's pre-check in
   `_assert_no_active_key` — two concurrent issue requests for the same user
   cannot both succeed even if both pass the pre-check.
@@ -216,15 +356,16 @@ one" isn't exactly true. Upgrade this only if the demo needs it to be exact.
 - **Chat agent** returns a canned string. No LiteLLM call, no MCP Gateway
   call happens. The token-minting and rate-limiting around it are real and
   will not need to change when the real agent is wired in — only
-  `_demo_agent_reply` in `app/routers/chat.py` gets replaced.
-- **Admin invites** have no email delivery. `POST /team/members` returns a
-  system-generated temporary password directly in the response; the admin
-  shares it out-of-band. A real email flow (or a signed invite-link flow)
-  is future work.
-- **No Alembic migrations.** Tables are created via
-  `Base.metadata.create_all()` on startup. Fine while the schema is still
-  moving fast across phases; introduce Alembic before this schema is
-  treated as stable (e.g. once the Gateway and audit-log tables land).
+  `_demo_agent_reply` in `app/api/routes/chat.py` gets replaced.
+- **Email has no retry queue and no HTML templates** — see "Email and
+  passwords". The set-password page is a bare HTML form served by this API.
+- **Changing a password does not end existing sessions.** There is no
+  session store, so a JWT issued before the change stays valid until it
+  expires (12 hours).
+- **Migrations run on container start**, in every backend container. That
+  is right for the single backend in docker-compose. With several replicas
+  on Kubernetes, move `alembic upgrade head` into a one-off Job or init
+  step so two pods never migrate at the same moment.
 - **No refresh tokens.** The dashboard JWT is a flat 12-hour token. Add a
   refresh flow only if the demo needs longer-lived sessions.
 - **CORS is wide open** (`cors_origins: ["*"]` by default) for local dev
@@ -248,7 +389,10 @@ This backend went through a ponytail code review after the initial build.
 Fixed in that pass (all verified against the live stack, not just read):
 
 - Login crashed with `500` on a password over 72 bytes (bcrypt's hard limit,
-  uncaught) — now bounded to 8-20 chars by `LoginRequest`/`AdminSignupRequest`
+  uncaught) — now bounded to 8-20 chars by `LoginRequest`/`AdminSignupRequest`.
+  That fix counted characters, so 20 emoji (80 bytes) still crashed; the
+  shared `Password` type in `app/schemas/auth.py` now also requires printable
+  ASCII, on every endpoint that takes a password
 - Admin could deactivate the only admin account, bricking the system — now
   blocked, and tightened further to "exactly one admin, ever"
 - Three check-then-insert races (email, store slug, store-member assignment)
@@ -263,12 +407,31 @@ Fixed in that pass (all verified against the live stack, not just read):
   conditions" above), not just exception handling
 - Dead `allow_credentials=True` in CORS config — removed
 
+A second review, after email, store scoping and migrations landed, fixed:
+
+- Emails were matched exactly, so `Bob@x.com` could not log in or reset a
+  password for an account stored as `bob@x.com`, and both could be
+  registered as separate accounts. Every email is now lowercased on the way
+  in (`Email` in `app/schemas/auth.py`); migration `0002` lowercases
+  existing rows
+- A member, admin, API key or store name longer than its column crashed
+  with `500` — now bounded in the schemas and rejected with `422`
+- Login answered faster for an unknown email than for a wrong password (no
+  bcrypt check ran), which revealed which emails have accounts — bcrypt now
+  runs either way
+- A deactivated member could still be assigned to a store, and was emailed
+  that they had access — now `404`
+- Set-password link expiry had no test — the smoke test now back-dates a
+  link in the database and checks it is refused
+- Unused `ApiKey.user` relationship — removed
+
 ## How to run it
 
 ```bash
 cp .env.example .env
 # edit .env: set POSTGRES_PASSWORD, JWT_SECRET
 # ADMIN_EMAIL/ADMIN_PASSWORD are optional — see "RBAC" above
+# SMTP_PASSWORD (Resend API key) is optional — see "Email and passwords"
 
 docker compose up -d --build
 docker compose ps        # wait for all three services healthy

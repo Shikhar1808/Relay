@@ -4,17 +4,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.bootstrap import bootstrap_admin
-from app.config import settings
-from app.database import engine
-from app.models import Base
-from app.routers import auth, chat, internal, stores, team
+from app.api.routes import auth, chat, internal, stores, team
+from app.core.config import settings
+from app.services.bootstrap import bootstrap_admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # The schema is NOT created here: `alembic upgrade head` runs before
+    # uvicorn starts (see the Dockerfile CMD).
     await bootstrap_admin()
     yield
 

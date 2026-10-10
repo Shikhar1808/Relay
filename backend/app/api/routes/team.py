@@ -1,9 +1,9 @@
 """Team management and gateway API key lifecycle.
 
 RBAC summary:
-  - Admin: create/list/deactivate members, issue/list/revoke ANY member's
-    key. Cannot be deactivated (there is exactly one admin — see
-    app/bootstrap.py) and cannot be created through /members (that route
+  - Admin: create/list/deactivate members, resend an invite, issue/list/
+    revoke ANY member's key. Each of these emails the affected member. Cannot be deactivated (there is exactly one admin — see
+    app/services/bootstrap.py) and cannot be created through /members (that route
     always creates role=member).
   - Member: cannot touch /members/* routes (403 via require_admin). Can
     manage only their OWN key through /me/api-keys/* — issue, list, revoke.
@@ -15,23 +15,25 @@ gateway API key at a time. Revoke before rotating.
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
-from app.deps import get_current_user, require_admin, user_rate_limit
-from app.models import ApiKey, Role, User
-from app.schemas import (
+from app.core.deps import get_current_user, require_admin, user_rate_limit
+from app.core.security import generate_api_key, generate_temp_password, hash_password
+from app.db.models import ApiKey, Role, TokenPurpose, User
+from app.db.session import get_db
+from app.schemas.auth import UserOut
+from app.schemas.team import (
     ApiKeyCreatedOut,
     ApiKeyOut,
     CreateApiKeyRequest,
     CreateMemberRequest,
     MemberCreatedOut,
-    UserOut,
 )
-from app.security import generate_api_key, generate_temp_password, hash_password
+from app.services.auth_tokens import issue_auth_token
+from app.services.mailer import invite_email, notice_email, send_email
 
 router = APIRouter(
     prefix="/team",
@@ -52,6 +54,7 @@ async def _assert_no_active_key(db: AsyncSession, user_id: uuid.UUID) -> None:
 @router.post("/members", response_model=MemberCreatedOut, status_code=status.HTTP_201_CREATED)
 async def create_member(
     body: CreateMemberRequest,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> MemberCreatedOut:
@@ -70,7 +73,26 @@ async def create_member(
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered") from exc
     await db.refresh(member)
 
+    token = await issue_auth_token(db, member.id, TokenPurpose.invite)
+    background.add_task(send_email, member.email, *invite_email(member.name, token))
+
     return MemberCreatedOut(user=UserOut.model_validate(member), temporary_password=temp_password)
+
+
+@router.post("/members/{member_id}/resend-invite", status_code=status.HTTP_204_NO_CONTENT)
+async def resend_invite(
+    member_id: uuid.UUID,
+    background: BackgroundTasks,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Emails a fresh set-password link; the previous invite link stops working."""
+    member = await db.get(User, member_id)
+    if not member or not member.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not found")
+
+    token = await issue_auth_token(db, member.id, TokenPurpose.invite)
+    background.add_task(send_email, member.email, *invite_email(member.name, token))
 
 
 @router.get("/members", response_model=list[UserOut])
@@ -85,6 +107,7 @@ async def list_members(
 @router.delete("/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def deactivate_member(
     member_id: uuid.UUID,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -93,8 +116,16 @@ async def deactivate_member(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not found")
     if member.role == Role.admin:
         raise HTTPException(status.HTTP_409_CONFLICT, "The admin account cannot be deactivated")
+    was_active = member.is_active
     member.is_active = False
     await db.commit()
+
+    if was_active:
+        background.add_task(
+            send_email,
+            member.email,
+            *notice_email(member.name, "Your Urumi account was deactivated", "An admin deactivated your Urumi account. You can no longer log in."),
+        )
 
 
 # ---- admin: issue/list/revoke a SPECIFIC member's key -----------------------
@@ -108,6 +139,7 @@ async def deactivate_member(
 async def issue_api_key(
     member_id: uuid.UUID,
     body: CreateApiKeyRequest,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyCreatedOut:
@@ -126,6 +158,13 @@ async def issue_api_key(
         raise HTTPException(status.HTTP_409_CONFLICT, "User already has an active API key — revoke it first") from exc
     await db.refresh(key)
 
+    # The key itself is never emailed — the admin hands it over from the response.
+    background.add_task(
+        send_email,
+        member.email,
+        *notice_email(member.name, "A Urumi API key was issued for you", f"An admin issued a gateway API key ({prefix}…) for your account."),
+    )
+
     return ApiKeyCreatedOut(id=key.id, raw_key=raw_key, prefix=prefix, name=key.name, created_at=key.created_at)
 
 
@@ -143,6 +182,7 @@ async def list_api_keys(
 async def revoke_api_key(
     member_id: uuid.UUID,
     key_id: uuid.UUID,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKey:
@@ -150,10 +190,19 @@ async def revoke_api_key(
     if not key or key.user_id != member_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found")
 
+    was_active = not key.revoked
     key.revoked = True
     key.revoked_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(key)
+
+    member = await db.get(User, member_id)
+    if was_active and member:
+        background.add_task(
+            send_email,
+            member.email,
+            *notice_email(member.name, "Your Urumi API key was revoked", f"An admin revoked your gateway API key ({key.prefix}…). It no longer works."),
+        )
     return key
 
 

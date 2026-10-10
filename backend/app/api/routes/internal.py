@@ -1,7 +1,9 @@
 """Service-to-service token resolution. This is what the MCP Gateway (a
 later phase) calls to turn a bearer token — either a member's gateway API
 key or a chat backend's short_chat_token — into a user identity, so it can
-attribute a tool call and check the caller's role.
+attribute a tool call and check the caller's role — and into the one store
+that caller may touch (store_id), which is how a member is kept out of
+every other store's data whichever MCP client or chat they come through.
 
 No dashboard-JWT auth on this router: it is meant to be called by other
 backend services on the cluster-internal network, not by browsers or MCP
@@ -17,13 +19,21 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
-from app.deps import get_redis
-from app.models import ApiKey, ChatToken, User
-from app.schemas import ResolveTokenOut, ResolveTokenRequest
-from app.security import sha256_hex
+from app.core.deps import get_redis
+from app.core.security import sha256_hex
+from app.db.models import ApiKey, ChatToken, Role, User
+from app.db.session import get_db
+from app.schemas.internal import ResolveTokenOut, ResolveTokenRequest
+from app.services.stores import store_for_member
 
 router = APIRouter(prefix="/internal", tags=["internal"])
+
+
+async def _resolved(db: AsyncSession, user: User, token_type: str) -> ResolveTokenOut:
+    store = None if user.role == Role.admin else await store_for_member(db, user.id)
+    return ResolveTokenOut(
+        user_id=user.id, role=user.role, token_type=token_type, store_id=store.id if store else None
+    )
 
 
 @router.post("/auth/resolve", response_model=ResolveTokenOut)
@@ -41,13 +51,13 @@ async def resolve_token(
         if user and user.is_active:
             api_key.last_used_at = datetime.now(timezone.utc)
             await db.commit()
-            return ResolveTokenOut(user_id=user.id, role=user.role, token_type="api_key")
+            return await _resolved(db, user, "api_key")
 
     cached_user_id = await redis.get(f"chat_token:{token_hash}")
     if cached_user_id:
         user = await db.get(User, uuid.UUID(cached_user_id))
         if user and user.is_active:
-            return ResolveTokenOut(user_id=user.id, role=user.role, token_type="chat_token")
+            return await _resolved(db, user, "chat_token")
 
     now = datetime.now(timezone.utc)
     result = await db.execute(
@@ -57,6 +67,6 @@ async def resolve_token(
     if chat_token is not None and chat_token.expires_at > now:
         user = await db.get(User, chat_token.user_id)
         if user and user.is_active:
-            return ResolveTokenOut(user_id=user.id, role=user.role, token_type="chat_token")
+            return await _resolved(db, user, "chat_token")
 
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid, expired, or revoked token")
