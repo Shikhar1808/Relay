@@ -42,7 +42,7 @@ async def send_email(to: str, subject: str, body: str) -> None:
 def _set_password_link(token: str) -> str:
     # After "#", not "?": a URL fragment is never sent to the server, so the
     # token stays out of access logs and Referer headers.
-    return f"{settings.app_base_url}/auth/set-password#token={token}"
+    return f"{settings.app_base_url}/set-password#token={token}"
 
 
 def invite_email(name: str, token: str) -> tuple[str, str]:

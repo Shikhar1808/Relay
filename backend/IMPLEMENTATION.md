@@ -25,7 +25,8 @@ A FastAPI + PostgreSQL + Redis backend covering:
 - Token-bucket rate limiting on login, signup, and all authenticated routes
 
 Not built yet: the MCP Gateway itself, the WooCommerce MCP server, real
-Kubernetes/Helm store provisioning, LiteLLM integration, the React dashboard.
+Kubernetes/Helm store provisioning, LiteLLM integration. The web console
+lives in `frontend/` (Next.js) and has its own README.
 Those are later phases — see the project plan doc.
 
 ## RBAC: admin vs member
@@ -170,11 +171,10 @@ requests. Invite links last 72 hours, reset links 30 minutes. Issuing a new
 link replaces the previous one of the same kind, and any password change
 deletes all of the user's outstanding links.
 
-There is no dashboard yet, so links point at this API
-(`APP_BASE_URL/auth/set-password#token=...`), which serves a minimal HTML
-form. The token sits after `#` so the browser never sends it to the server
-and it stays out of access logs. When the dashboard exists, point `APP_BASE_URL` at it and delete
-`set_password_page` from `app/api/routes/auth.py`.
+Links point at the frontend (`APP_BASE_URL/set-password#token=...`), whose
+page posts the token to `POST /auth/set-password`. The token sits after
+`#` so the browser never sends it to any server and it stays out of access
+logs. `APP_BASE_URL` must be the address people open the frontend at.
 
 **Who gets emailed, and when:**
 
@@ -259,7 +259,6 @@ backend/
 | GET | `/auth/me` | JWT | user, 60/min | Current user identity |
 | POST | `/auth/change-password` | JWT | IP, 5/min | Changes own password; 400 if the current one is wrong |
 | POST | `/auth/forgot-password` | none | IP, 5/min | Emails a reset link; identical 202 whether or not the email exists |
-| GET | `/auth/set-password` | none | none | HTML form for the emailed link (stand-in for the dashboard) |
 | POST | `/auth/set-password` | none | IP, 5/min | Redeems an invite/reset token, sets the password, returns a JWT; 400 if invalid, used, or expired |
 | POST | `/team/members` | JWT (admin) | user, 60/min | Creates a member, emails an invite link, returns a one-time temp password |
 | POST | `/team/members/{id}/resend-invite` | JWT (admin) | user, 60/min | Emails a fresh invite link; the old one stops working |
@@ -358,7 +357,7 @@ one" isn't exactly true. Upgrade this only if the demo needs it to be exact.
   will not need to change when the real agent is wired in — only
   `_demo_agent_reply` in `app/api/routes/chat.py` gets replaced.
 - **Email has no retry queue and no HTML templates** — see "Email and
-  passwords". The set-password page is a bare HTML form served by this API.
+  passwords".
 - **Changing a password does not end existing sessions.** There is no
   session store, so a JWT issued before the change stays valid until it
   expires (12 hours).
@@ -369,7 +368,7 @@ one" isn't exactly true. Upgrade this only if the demo needs it to be exact.
 - **No refresh tokens.** The dashboard JWT is a flat 12-hour token. Add a
   refresh flow only if the demo needs longer-lived sessions.
 - **CORS is wide open** (`cors_origins: ["*"]` by default) for local dev
-  against the not-yet-built React dashboard. Restrict this via the
+  against the frontend on another port. Restrict this via the
   `CORS_ORIGINS` env var before any real deployment. (`allow_credentials`
   is deliberately NOT set — this API is Bearer-JWT only, no cookies, so
   there's nothing for it to protect.)
@@ -434,7 +433,8 @@ cp .env.example .env
 # SMTP_PASSWORD (Resend API key) is optional — see "Email and passwords"
 
 docker compose up -d --build
-docker compose ps        # wait for all three services healthy
+docker compose ps        # wait for all four services healthy
+# the web console is now on http://localhost:3000, the API on :8000
 
 cd backend
 uv sync                  # installs runtime + dev deps (httpx) into .venv

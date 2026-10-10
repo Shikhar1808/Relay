@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+/* Urumi: a cool, quiet workspace; the aurora colours are kept for the sign-in panel, the logo and people. */
+@theme {
+  --color-canvas: #f2f5fa;
+  --color-ink: #1b2140;
+  --color-ink-soft: #636b85;
+  --color-line: #e1e6f0;
+  --color-accent: #5446e0;
+  --color-accent-deep: #4234c4;
+  --color-accent-wash: #eeecff;
+  --color-good: #12663d;
+  --color-good-wash: #dcf5e7;
+  --color-brass: #8a5a00;
+  --color-brass-wash: #fff4d6;
+  --color-danger: #c2313b;
+
+  --color-butter: #ffe89a;
+  --color-apricot: #f9b384;
+  --color-rose: #f9a3cb;
+  --color-orchid: #d6aaf8;
+  --color-sky: #a4e6f1;
+
+  --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* The sign-in panel: blurred colour fields that drift slowly. */
+.aurora {
+  background: linear-gradient(160deg, #fff3b0, #f7a56e 45%, #c63fd6 80%, #8a1fd1);
+  isolation: isolate;
+}
+
+.aurora > span {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(56px);
+  animation: drift 16s ease-in-out infinite alternate;
+}
+
+.aurora > span:nth-child(1) {
+  inset: -10% 40% 55% -15%;
+  background: #fff1a8;
+}
+
+.aurora > span:nth-child(2) {
+  inset: -15% -15% 60% 55%;
+  background: #8fe6f2;
+  animation-duration: 21s;
+  animation-direction: alternate-reverse;
+}
+
+.aurora > span:nth-child(3) {
+  inset: 12% -10% 40% 45%;
+  background: #e59bf5;
+  animation-duration: 19s;
+}
+
+.aurora > span:nth-child(4) {
+  inset: 40% 45% 15% -15%;
+  background: #f2784b;
+  animation-duration: 23s;
+  animation-direction: alternate-reverse;
+}
+
+.aurora > span:nth-child(5) {
+  inset: 45% -10% 5% 40%;
+  background: #e83fd0;
+  animation-duration: 17s;
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(-6%, 4%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(8%, -6%, 0) scale(1.2);
+  }
+}
+
+/* Each page eases in when you arrive on it. Next hides the page you left
+   rather than removing it, so this replays every time a page is shown. */
+.page > *,
+.arrive {
+  animation: arrive 0.28s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* The agent is writing. */
+.typing span {
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin-right: 0.25rem;
+  border-radius: 50%;
+  background: var(--color-ink-soft);
+  animation: typing 1s ease-in-out infinite;
+}
+
+.typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typing {
+  50% {
+    opacity: 0.3;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora > span,
+  .page > *,
+  .arrive,
+  .typing span {
+    animation: none;
+  }
+}

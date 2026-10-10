@@ -1,5 +1,4 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,54 +27,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _ip_rate_limit = ip_rate_limit(capacity=5, refill_per_minute=5)
 
 _DUMMY_HASH = hash_password("no account has this password")  # see login()
-
-# Stand-in for the dashboard's set-password screen, so emailed links work
-# before a frontend exists. Static on purpose: the token is read from the URL
-# fragment in the browser, so it never reaches this route or its access log.
-_SET_PASSWORD_PAGE = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<title>Set your Urumi password</title>
-</head>
-<body>
-<h1>Set your Urumi password</h1>
-<form id="form">
-  <label for="password">New password (8 to 20 letters, digits or symbols; no emoji)</label>
-  <input id="password" type="password" minlength="8" maxlength="20" pattern="[ -~]+" required autocomplete="new-password">
-  <button type="submit">Save password</button>
-</form>
-<p id="result" role="status"></p>
-<script>
-const form = document.getElementById("form");
-const result = document.getElementById("result");
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const response = await fetch("/auth/set-password", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      token: new URLSearchParams(location.hash.slice(1)).get("token"),
-      new_password: document.getElementById("password").value,
-    }),
-  });
-  if (response.ok) {
-    form.hidden = true;
-    result.textContent = "Password saved. You can now log in.";
-  } else if (response.status === 429) {
-    result.textContent = "Too many attempts. Wait a minute and try again.";
-  } else if (response.status === 422) {
-    result.textContent = "Use 8 to 20 letters, digits or symbols. Emoji and accented letters are not allowed.";
-  } else {
-    result.textContent = "This link is invalid or has expired. Ask for a new one.";
-  }
-});
-</script>
-</body>
-</html>
-"""
 
 
 async def _set_password(db: AsyncSession, user: User, new_password: str, background: BackgroundTasks) -> None:
@@ -167,11 +118,6 @@ async def _send_reset_link(email: str) -> None:
         if user and user.is_active:
             token = await issue_auth_token(db, user.id, TokenPurpose.reset)
             await send_email(user.email, *reset_email(user.name, token))
-
-
-@router.get("/set-password", response_class=HTMLResponse, include_in_schema=False)
-async def set_password_page() -> str:
-    return _SET_PASSWORD_PAGE
 
 
 @router.post("/set-password", response_model=TokenResponse, dependencies=[Depends(_ip_rate_limit)])

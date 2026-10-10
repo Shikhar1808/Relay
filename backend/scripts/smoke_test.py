@@ -336,10 +336,6 @@ def main() -> int:
     assert r_unknown.json() == r_known.json()
     _ok("known and unknown emails get an identical 202")
 
-    r = client.get("/auth/set-password")
-    assert r.status_code == 200 and "text/html" in r.headers["content-type"], r.text
-    _ok("set-password page is served")
-
     _step("emailed set-password links (invite + reset)")
     reset_token = _emailed_token(repo_root, other_email, "Reset your")
     if reset_token is None:

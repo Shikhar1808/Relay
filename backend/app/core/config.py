@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from: str = "Urumi <onboarding@resend.dev>"
 
-    # Base of the links in invite/reset emails. Points at this API, which
-    # serves the set-password page itself until the dashboard exists.
-    app_base_url: str = "http://localhost:8000"
+    # Base of the links in invite/reset emails: the frontend's public URL
+    # (it serves /set-password).
+    app_base_url: str = "http://localhost:3000"
     invite_token_ttl_hours: int = 72
     reset_token_ttl_minutes: int = 30
 
