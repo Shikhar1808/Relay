@@ -21,7 +21,10 @@ A FastAPI + PostgreSQL + Redis backend covering:
   token-resolve scoped to those stores
 - A demo chat agent that mints short-lived chat tokens server-side (one
   session reused per user, not one per message)
-- An internal token-resolve endpoint the future MCP Gateway will call
+- An internal token-resolve endpoint the MCP Gateway (`gateway/`) calls on
+  every request, guarded by a shared service token
+- The registry of upstream MCP servers the gateway forwards to, with
+  credentials encrypted at rest
 - Token-bucket rate limiting on login, signup, and all authenticated routes
 
 Not built yet: the MCP Gateway itself, the WooCommerce MCP server, real
@@ -100,14 +103,15 @@ request, including for a chat session or API key issued earlier.
 | Chat: `POST /chat/message` | The stores are taken from the logged-in user, never from the message. A member with no store gets 403 |
 | Any MCP client (Claude Code, Cursor, the chat agent) through the gateway | `/internal/auth/resolve` returns `store_ids` for the API key or chat token. A member with no store gets `store_ids: []`; the admin gets every store, so the gateway filters the same way for everyone and never special-cases the role |
 
+**Who enforces it at the gateway:** `gateway/app/tools.py`. It takes the
+stores from `store_ids` in the resolve response and nothing else — never from
+a tool argument, a header, or anything the LLM wrote. An upstream with a
+`store_id` is listed and callable only for callers who have that store; one
+with no `store_id` is shared. Tool names are `slug__tool`, so a member in
+several stores can tell which store a tool acts on.
+
 **What is NOT enforced yet, because it does not exist yet:**
 
-- The MCP Gateway. When it is built it must take the stores from
-  `store_ids` in the resolve response and nothing else — never from a tool
-  argument, a header, or anything the LLM wrote — and must refuse a member
-  whose `store_ids` is empty. Tool names must say which store they act on,
-  because one member can now reach several. This backend only supplies the
-  answer; the gateway is what has to obey it.
 - The real chat agent. `_demo_agent_reply` is a stub. The real one must put
   only those stores' data into the LLM prompt and tool results.
 
@@ -218,6 +222,7 @@ backend/
       config.py            Settings from env vars (pydantic-settings)
       security.py          Password hashing (bcrypt directly), JWT, key/token generation
       rate_limit.py        Redis token-bucket primitive (see below)
+      crypto.py            AES-256-GCM for upstream credentials (the gateway has the matching decrypt)
       deps.py              FastAPI dependencies: auth, admin gate, rate limits
     db/
       session.py           Async SQLAlchemy engine + session dependency
@@ -227,10 +232,11 @@ backend/
         api_key.py           ApiKey
         store.py             Store, StoreMember, StoreStatus
         tokens.py            AuthToken, TokenPurpose, ChatToken
+        upstream.py          UpstreamServer (an MCP server the gateway forwards to)
     schemas/             Pydantic request/response models, one file per route file
       auth.py              Login, signup, password schemas; the Password rule; UserOut
       team.py              Member and API key schemas
-      stores.py  chat.py  internal.py
+      stores.py  chat.py  internal.py  upstreams.py
     services/            Logic shared by more than one route
       bootstrap.py         Single-admin creation, shared by startup + signup route
       mailer.py            SMTP sender + plain-text email templates
@@ -242,9 +248,12 @@ backend/
         team.py            Member CRUD + admin and self-service API key routes
         stores.py          Store create (stub) + member assignment
         chat.py            Demo chat agent + chat token minting
-        internal.py        POST /internal/auth/resolve
+        upstreams.py       Upstream MCP server registry (admin only); tells the gateway on change
+        internal.py        POST /internal/auth/resolve (service token required)
   scripts/
     smoke_test.py                       End-to-end check against a live stack
+  tests/                                Unit tests: `uv run pytest` (settings, passwords and tokens,
+                                        encryption, input rules, the rate limiter)
   migrations/                           Alembic: env.py + one file per schema change
   alembic.ini
   Dockerfile                            Runs `alembic upgrade head`, then uvicorn
@@ -278,7 +287,11 @@ backend/
 | DELETE | `/stores/{id}/members/{user_id}` | JWT (admin) | user, 60/min | Removes a member from a store, effective immediately |
 | GET | `/stores/{id}/members` | JWT (admin) | user, 60/min | Lists a store's assigned members |
 | POST | `/chat/message` | JWT | user, 10/min | Demo agent reply scoped to the caller's store; mints/reuses a short_chat_token; 403 for a member with no store |
-| POST | `/internal/auth/resolve` | none (internal) | none | Resolves an API key or chat token to a user identity and the stores they may touch |
+| GET | `/upstream-servers` | JWT (admin) | user, 60/min | Lists registered MCP servers; `has_credential` only, never the credential |
+| POST | `/upstream-servers` | JWT (admin) | user, 60/min | Registers a server; 409 on a duplicate slug, 404 for an unknown store |
+| PATCH | `/upstream-servers/{id}` | JWT (admin) | user, 60/min | Changes only the fields sent (disable with `enabled: false`; `credential: ""` removes it). The slug is fixed |
+| DELETE | `/upstream-servers/{id}` | JWT (admin) | user, 60/min | Removes a server |
+| POST | `/internal/auth/resolve` | service token | none | Resolves an API key or chat token to a user identity and the stores they may touch |
 
 ## Rate limiting: why token bucket
 
@@ -374,15 +387,16 @@ one" isn't exactly true. Upgrade this only if the demo needs it to be exact.
   `CORS_ORIGINS` env var before any real deployment. (`allow_credentials`
   is deliberately NOT set — this API is Bearer-JWT only, no cookies, so
   there's nothing for it to protect.)
-- **`/internal/auth/resolve` has no auth of its own.** It's meant to be
-  called only by other backend services over the cluster-internal network
-  (the future MCP Gateway). It's open here because there's no cluster to
-  restrict it with yet — a NetworkPolicy should scope this in Kubernetes,
-  consistent with the rest of the project's "deny by default" posture. It
-  also writes `last_used_at` on every call — fine at today's volume (only
-  the smoke test calls it), but once the real gateway routes every tool
-  call through it, that becomes a write on the hottest path in the system.
-  Worth debouncing then, not now.
+- **`/internal/auth/resolve` trusts one shared secret.** Callers must send
+  `INTERNAL_SERVICE_TOKEN` as a bearer token (compared in constant time), so
+  reaching the backend is not enough to probe tokens. A NetworkPolicy should
+  still limit callers to the gateway in Kubernetes. The route also writes
+  `last_used_at` on every call, and the gateway calls it on every MCP
+  request, so that is a write on the hottest path in the system — worth
+  debouncing if it shows up under load.
+- **No SSRF filter on upstream URLs.** Only the scheme is checked, because
+  upstream servers legitimately live on cluster-internal addresses and only
+  the admin can register one.
 
 ## Review history
 
@@ -430,17 +444,21 @@ A second review, after email, store scoping and migrations landed, fixed:
 
 ```bash
 cp .env.example .env
-# edit .env: set POSTGRES_PASSWORD, JWT_SECRET
+# edit .env: set POSTGRES_PASSWORD, JWT_SECRET, GATEWAY_ENCRYPTION_KEY,
+#   INTERNAL_SERVICE_TOKEN, GATEWAY_DB_PASSWORD (the file says how to generate them)
 # ADMIN_EMAIL/ADMIN_PASSWORD are optional — see "RBAC" above
 # SMTP_PASSWORD (Resend API key) is optional — see "Email and passwords"
 
 docker compose up -d --build
-docker compose ps        # wait for all four services healthy
-# the web console is now on http://localhost:3000, the API on :8000
+docker compose ps        # wait for the services to be healthy (db-init exits, that is normal)
+# the web console is now on http://localhost:3000, the API on :8000,
+# the MCP gateway on http://localhost:8080/mcp (see gateway/README.md)
 
 cd backend
-uv sync                  # installs runtime + dev deps (httpx) into .venv
-uv run scripts/smoke_test.py
+uv sync                  # installs runtime + dev deps (httpx, pytest) into .venv
+uv run pytest            # unit tests, no stack needed (the rate limiter ones use the compose Redis)
+uv run scripts/smoke_test.py   # end to end, against the running stack
+# or, from the repo root: ./run_tests.sh (unit) and ./run_tests.sh all (everything)
 ```
 
 The smoke test is the self-check for this phase: it exercises every

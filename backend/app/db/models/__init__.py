@@ -1,10 +1,11 @@
 """SQLAlchemy ORM models for the Platform API, one module per area.
 
-Six tables cover this phase: users (admin + members), auth_tokens (emailed
+Seven tables cover this phase: users (admin + members), auth_tokens (emailed
 invite / password-reset links), api_keys (gateway credentials issued by an
 admin to a member), stores (provisioning stub), store_members (who can use
 which store), chat_tokens (short-lived tokens the chat agent mints on behalf
-of a logged-in user).
+of a logged-in user), upstream_servers (the MCP servers the gateway forwards
+to, with encrypted credentials).
 
 Import models from this package (`from app.db.models import User`), not from
 the modules inside it. A new model module MUST be imported below — that is
@@ -18,6 +19,7 @@ from app.db.models.api_key import ApiKey
 from app.db.models.base import Base
 from app.db.models.store import Store, StoreMember, StoreStatus
 from app.db.models.tokens import AuthToken, ChatToken, TokenPurpose
+from app.db.models.upstream import UpstreamServer
 from app.db.models.user import Role, User
 
 __all__ = [
@@ -30,5 +32,6 @@ __all__ = [
     "StoreMember",
     "StoreStatus",
     "TokenPurpose",
+    "UpstreamServer",
     "User",
 ]

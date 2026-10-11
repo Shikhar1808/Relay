@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, chat, internal, stores, team
+from app.api.routes import auth, chat, internal, stores, team, upstreams
 from app.core.config import settings
 from app.services.bootstrap import bootstrap_admin
 
@@ -29,6 +29,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(team.router)
 app.include_router(stores.router)
+app.include_router(upstreams.router)
 app.include_router(chat.router)
 app.include_router(internal.router)
 

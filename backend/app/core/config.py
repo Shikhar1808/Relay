@@ -1,6 +1,8 @@
 """Environment-driven settings. Values come from process env vars (docker-compose)
 or a local .env file (bare `uvicorn` runs). Field names match env vars case-insensitively.
 """
+import base64
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +23,12 @@ class Settings(BaseSettings):
     admin_password: str | None = None
 
     chat_token_ttl_minutes: int = 30
+
+    # AES-256-GCM key for upstream MCP server credentials (app/core/crypto.py):
+    # 32 random bytes, base64. The gateway holds the same key to decrypt them.
+    gateway_encryption_key: str
+    # Shared secret the gateway sends to /internal/* (app/api/routes/internal.py).
+    internal_service_token: str
 
     # Outbound email over SMTP (see app/services/mailer.py). Defaults are Resend's SMTP
     # relay with its shared test sender, which only delivers to the Resend
@@ -48,6 +56,25 @@ class Settings(BaseSettings):
         # the var is unset in .env, not an absent key — normalize that to
         # None so "unset" means the same thing everywhere in this module.
         return value or None
+
+    @field_validator("gateway_encryption_key")
+    @classmethod
+    def _encryption_key_is_32_bytes(cls, value: str) -> str:
+        # Fail at startup, not on the first save of an upstream credential.
+        try:
+            size = len(base64.b64decode(value, validate=True))
+        except ValueError as exc:
+            raise ValueError("GATEWAY_ENCRYPTION_KEY must be base64") from exc
+        if size != 32:
+            raise ValueError("GATEWAY_ENCRYPTION_KEY must decode to 32 bytes (AES-256)")
+        return value
+
+    @field_validator("internal_service_token")
+    @classmethod
+    def _service_token_is_long_enough(cls, value: str) -> str:
+        if len(value) < 32:
+            raise ValueError("INTERNAL_SERVICE_TOKEN must be at least 32 characters")
+        return value
 
     @field_validator("admin_email")
     @classmethod

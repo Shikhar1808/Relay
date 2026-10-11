@@ -5,20 +5,23 @@ attribute a tool call and check the caller's role — and into the stores
 that caller may touch (store_ids), which is how a member is kept out of
 every other store's data whichever MCP client or chat they come through.
 
-No dashboard-JWT auth on this router: it is meant to be called by other
-backend services on the cluster-internal network, not by browsers or MCP
-clients directly. In production this route must be restricted via
-NetworkPolicy to callers inside the cluster (see system design notes) —
-it is intentionally open here only because there is no cluster yet.
+No dashboard-JWT auth on this router: it is called by other backend
+services, not by browsers or MCP clients. Every request must carry the
+shared INTERNAL_SERVICE_TOKEN as a bearer token, so someone who can merely
+reach the backend cannot use this route to test stolen or guessed tokens.
+In the cluster a NetworkPolicy limits callers as well (see system design notes).
 """
+import hmac
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_redis
 from app.core.security import sha256_hex
 from app.db.models import ApiKey, ChatToken, User
@@ -26,7 +29,16 @@ from app.db.session import get_db
 from app.schemas.internal import ResolveTokenOut, ResolveTokenRequest
 from app.services.stores import stores_for_user
 
-router = APIRouter(prefix="/internal", tags=["internal"])
+_bearer = HTTPBearer(auto_error=False)
+
+
+async def require_service_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:
+    # compare_digest: a plain == would leak how many leading characters matched.
+    if creds is None or not hmac.compare_digest(creds.credentials, settings.internal_service_token):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Service token required")
+
+
+router = APIRouter(prefix="/internal", tags=["internal"], dependencies=[Depends(require_service_token)])
 
 
 async def _resolved(db: AsyncSession, user: User, token_type: str) -> ResolveTokenOut:

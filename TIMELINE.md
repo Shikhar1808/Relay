@@ -5,33 +5,33 @@ and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on 
 
 - **Deadline:** 26 Oct 2026
 - **Last updated:** 11 Oct 2026
-- **Now:** Oct 9–11 block, three items open (upstream registry, credential encryption, audit log schema)
+- **Now:** the gateway runs (`gateway/`) and passes its end-to-end test; next is its audit log (MCP logs database, append-only, hash chain)
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
 ## Oct 9–11: Database and platform backend
 
-- [x] Repo with backend and frontend (`backend/`, `frontend/`; the guide's `/gateway`, `/woo-mcp`, `/helm`, `/create-store-service` come later)
+- [x] Repo with backend, frontend and gateway (`backend/`, `frontend/`, `gateway/`; the guide's `/woo-mcp`, `/helm`, `/create-store-service` come later)
 - [x] Postgres platform database
 - [x] Redis
 - [x] Tables: `users`, `api_keys` (hashed), `short_chat_tokens`
 - [x] Store membership table (`store_members`, a member can be in several stores)
 - [x] Database migrations (Alembic)
 - [x] Auth endpoints: admin signup, login, issue and revoke API keys
-- [ ] Table: `upstream_servers` with encrypted credentials
-- [ ] Upstream server endpoints: list, add, edit, disable, remove
-- [ ] AES-256-GCM encrypt/decrypt helper, used when saving and loading upstream credentials
+- [x] Table: `upstream_servers` with encrypted credentials (and an optional `store_id`)
+- [x] Upstream server endpoints: list, add, edit, disable, remove (`/upstream-servers`)
+- [x] AES-256-GCM encrypt/decrypt helper, used when saving and loading upstream credentials
 - [ ] MCP logs database with `audit_log` table
-- [ ] **Checkpoint:** create a user, issue an API key, add an upstream server with encrypted credentials
+- [x] **Checkpoint:** create a user, issue an API key, add an upstream server with encrypted credentials
 
 ## Oct 12–13: MCP gateway core
 
-- [ ] Streamable HTTP server at `/mcp`
+- [x] Streamable HTTP server at `/mcp` (separate service, official `mcp` SDK 2.3, stateless)
 - [x] Resolve an API key or chat token to a user (`POST /internal/auth/resolve`)
-- [ ] Gateway auth middleware that uses it
-- [ ] Upstream registry: load enabled upstreams at startup and on change
-- [ ] `tools/list` with concurrent fan-out, 5 s timeout per upstream, `slug__tool` names
-- [ ] `tools/call` routing: strip prefix, find upstream, add credential, 30 s timeout
+- [x] Gateway auth that uses it on every request, with a service token on `/internal/*`
+- [x] Upstream registry: load enabled upstreams at startup and on change (every 30 s and on a Redis message)
+- [x] `tools/list` with concurrent fan-out, 5 s timeout per upstream, `slug__tool` names (fan-out runs in the background; requests read a snapshot)
+- [x] `tools/call` routing: strip prefix, find upstream, add credential, 30 s timeout, store check
 - [ ] Audit log entry on every tool call
 - [ ] **Checkpoint:** call a mock upstream through the gateway and see the audit entry
 
@@ -57,8 +57,8 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 - [ ] Full definition-of-done flow by hand
 - [ ] Second and third upstream servers (GitHub MCP, one small custom server)
-- [ ] API key revocation rejected at the gateway
-- [ ] Disabling an upstream removes its tools
+- [x] API key revocation rejected at the gateway
+- [x] Disabling an upstream removes its tools
 
 ## Oct 17–18: Kubernetes core
 
@@ -67,7 +67,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [ ] Readiness and liveness probes on every workload
 - [ ] Resource requests and limits on every container
 - [ ] All secrets in Kubernetes Secrets
-- [x] Container images for backend and frontend (non-root, health endpoints)
+- [x] Container images for backend, frontend and gateway (non-root, health endpoints)
 - [ ] **Checkpoint:** everything running in local Kubernetes
 
 ## Oct 19–20: Ingress and WordPress init
@@ -80,7 +80,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 ## Oct 21: Health checks and audit log UI
 
-- [ ] Background upstream health check (30 s, cached in Redis)
+- [x] Background upstream health check (30 s, cached in Redis as `upstream:<id>:status`)
 - [ ] Servers page shows Connected / Unreachable / Disabled
 - [ ] Kill-pod test: dead server shows Unreachable, others keep working
 - [ ] Audit log page: user, server, tool, time, duration, outcome
@@ -118,10 +118,12 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - Change password, forgot password, set password by emailed link
 - Members can belong to several stores (for cross-store questions); chat and `/internal/auth/resolve` return `store_ids`, and the gateway must filter on them
 - Chat and dashboard rate limits no longer share one bucket per user
+- Gateway hardening beyond the guide: no anonymous path, tokens in the URL refused, Host allowlist, health on a separate unpublished port, read-only database role, read-only container filesystem
+- Tests: `./run_tests.sh` runs the unit tests of both services (pytest), `./run_tests.sh all` adds the two end-to-end tests (`backend/scripts/smoke_test.py`, `gateway/tests/integration_test.py` with mock upstreams)
 
 ## Open questions
 
 - The assignment says every member can use every enabled server. A member can now be in several stores, but is still limited to those. Decide before the demo whether both demo users get both stores (then the cross-store question works for either, not only the admin).
-- Gateway work to plan with this: upstreams need a `store_id` (null = shared), tool names must say which store they act on, and the gateway filters on `store_ids` from resolve.
-- Whether the gateway is our own or a fork of `dunialabs/peta-core` is undecided. A spike on 11 Oct showed it runs standalone with an admin API and static per-user tokens, but needs patches for tool names (`slug__tool`), upstream health and audit detail, plus an encryption bridge from our backend.
+- The gateway is our own (not a fork of `dunialabs/peta-core`, which was tried in a spike on 11 Oct). Still to build in it: the audit log (levels, severity, append-only, hash chain), per-user rate limits. Deferred on purpose: OAuth for members and log retention; the code leaves room for both.
+- The registry endpoint is `PATCH /upstream-servers/{id}` (partial edit), where the guide says PUT.
 - Chat tokens are not revoked on sign-out (the guide says they should be).

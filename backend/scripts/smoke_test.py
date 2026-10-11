@@ -76,6 +76,16 @@ def _expire_auth_tokens(repo_root: Path, user_id: str) -> None:
     assert "UPDATE 1" in done.stdout, (done.stdout, done.stderr)
 
 
+def _psql(repo_root: Path, sql: str) -> str:
+    """Runs one read-only query in the compose Postgres and returns the bare value."""
+    done = subprocess.run(
+        ["docker", "compose", "exec", "-T", "postgres", "sh", "-c", f'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "{sql}"'],
+        cwd=repo_root, capture_output=True, text=True, timeout=20,
+    )
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    return done.stdout
+
+
 def _step(label: str) -> None:
     print(f"-- {label}")
 
@@ -90,6 +100,9 @@ def main() -> int:
     admin_email = os.environ.get("ADMIN_EMAIL", env.get("ADMIN_EMAIL"))
     admin_password = os.environ.get("ADMIN_PASSWORD", env.get("ADMIN_PASSWORD"))
     assert admin_email and admin_password, "ADMIN_EMAIL/ADMIN_PASSWORD not found in env or repo-root .env"
+    service_token = os.environ.get("INTERNAL_SERVICE_TOKEN", env.get("INTERNAL_SERVICE_TOKEN"))
+    assert service_token, "INTERNAL_SERVICE_TOKEN not found in env or repo-root .env"
+    service_headers = {"Authorization": f"Bearer {service_token}"}
 
     client = httpx.Client(base_url=BASE_URL, timeout=10)
     unique = uuid.uuid4().hex[:8]
@@ -162,8 +175,14 @@ def main() -> int:
     assert r.status_code == 409, r.text
     _ok("issuing a second key while one is active is rejected with 409")
 
-    _step("resolve API key (future gateway's auth path)")
+    _step("resolve API key (the gateway's auth path)")
     r = client.post("/internal/auth/resolve", json={"token": raw_key})
+    assert r.status_code == 401, r.text
+    r = client.post("/internal/auth/resolve", json={"token": raw_key}, headers={"Authorization": "Bearer wrong"})
+    assert r.status_code == 401, r.text
+    _ok("resolve refuses callers without the service token, even with a valid API key")
+
+    r = client.post("/internal/auth/resolve", json={"token": raw_key}, headers=service_headers)
     assert r.status_code == 200, r.text
     resolved = r.json()
     assert resolved["user_id"] == member_id, resolved
@@ -176,7 +195,7 @@ def main() -> int:
     assert r.status_code == 200 and r.json()["revoked"] is True, r.text
     _ok("key revoked")
 
-    r = client.post("/internal/auth/resolve", json={"token": raw_key})
+    r = client.post("/internal/auth/resolve", json={"token": raw_key}, headers=service_headers)
     assert r.status_code == 401, r.text
     _ok("resolve rejects the revoked key with 401")
 
@@ -273,7 +292,7 @@ def main() -> int:
     _ok("the admin cannot be pinned to a single store")
 
     both = [store_id, second_store_id]
-    r = client.post("/internal/auth/resolve", json={"token": member_key})
+    r = client.post("/internal/auth/resolve", json={"token": member_key}, headers=service_headers)
     assert r.status_code == 200 and r.json()["store_ids"] == both, r.text
     r = client.post("/chat/message", json={"message": "hello"}, headers=member_headers)
     assert r.status_code == 200 and r.json()["store_ids"] == both, r.text
@@ -283,7 +302,7 @@ def main() -> int:
 
     r = client.delete(f"/stores/{store_id}/members/{member_id}", headers=admin_headers)
     assert r.status_code == 204, r.text
-    r = client.post("/internal/auth/resolve", json={"token": member_key})
+    r = client.post("/internal/auth/resolve", json={"token": member_key}, headers=service_headers)
     assert r.status_code == 200 and r.json()["store_ids"] == [second_store_id], r.text
     r = client.post("/chat/message", json={"message": "hello"}, headers=member_headers)
     assert r.status_code == 200 and r.json()["store_ids"] == [second_store_id], r.text
@@ -294,6 +313,63 @@ def main() -> int:
     r = client.post("/chat/message", json={"message": "hello"}, headers=admin_headers)
     assert r.status_code == 200 and {store_id, second_store_id, third_store_id} <= set(r.json()["store_ids"]), r.text
     _ok("the admin's chat gets every store, so the gateway never needs to special-case the role")
+
+    _step("upstream MCP server registry (admin only, credentials encrypted)")
+    slug = f"smoke-{unique}"
+    new_upstream = {"name": "Smoke upstream", "slug": slug, "url": "http://upstream.invalid/mcp"}
+    r = client.get("/upstream-servers", headers=member_headers)
+    assert r.status_code == 403, r.text
+    _ok("a member cannot see the registry")
+
+    r = client.post("/upstream-servers", json={**new_upstream, "credential": "Bearer smoke-secret"}, headers=admin_headers)
+    assert r.status_code == 201, r.text
+    upstream = r.json()
+    assert upstream["has_credential"] is True and upstream["store_id"] is None and upstream["enabled"] is True, upstream
+    assert "smoke-secret" not in r.text and "credential_ciphertext" not in r.text, r.text
+    r = client.get("/upstream-servers", headers=admin_headers)
+    assert r.status_code == 200 and "smoke-secret" not in r.text and slug in r.text, r.text
+    found = _psql(repo_root, f"SELECT position(convert_to('smoke-secret', 'UTF8') in credential_ciphertext) FROM upstream_servers WHERE slug = '{slug}'")
+    assert found.split() == ["0"], found
+    _ok("a credential is never returned and is not readable in the database")
+
+    r = client.post("/upstream-servers", json=new_upstream, headers=admin_headers)
+    assert r.status_code == 409, r.text
+    for bad_slug in ("a__b", "a_b", "Shop", "-shop", ""):
+        r = client.post("/upstream-servers", json={**new_upstream, "slug": bad_slug}, headers=admin_headers)
+        assert r.status_code == 422, (bad_slug, r.text)
+    for bad_url in ("ftp://example.com/mcp", "http://user:pw@example.com/mcp"):
+        r = client.post("/upstream-servers", json={**new_upstream, "slug": f"x-{unique}", "url": bad_url}, headers=admin_headers)
+        assert r.status_code == 422, (bad_url, r.text)
+    r = client.post("/upstream-servers", json={**new_upstream, "slug": f"x-{unique}", "credential": "a\r\nEvil: 1"}, headers=admin_headers)
+    assert r.status_code == 422, r.text
+    r = client.post("/upstream-servers", json={**new_upstream, "slug": f"x-{unique}", "store_id": str(uuid.uuid4())}, headers=admin_headers)
+    assert r.status_code == 404, r.text
+    _ok("duplicate slugs, slugs with underscores, non-http URLs, a login inside the URL, header injection and unknown stores are rejected")
+
+    moved = "http://elsewhere.invalid/mcp"
+    r = client.patch(f"/upstream-servers/{upstream['id']}", json={"url": moved}, headers=admin_headers)
+    assert r.status_code == 400, r.text
+    r = client.get("/upstream-servers", headers=admin_headers)
+    assert moved not in r.text, r.text
+    r = client.patch(f"/upstream-servers/{upstream['id']}", json={"url": new_upstream["url"], "name": "Renamed"}, headers=admin_headers)
+    assert r.status_code == 200 and r.json()["name"] == "Renamed", r.text
+    r = client.patch(f"/upstream-servers/{upstream['id']}", json={"url": moved, "credential": "Bearer smoke-secret"}, headers=admin_headers)
+    assert r.status_code == 200 and r.json()["url"] == moved and r.json()["has_credential"] is True, r.text
+    _ok("a server's URL cannot be changed while keeping its stored credential, unless the credential is sent again")
+
+    r = client.patch(f"/upstream-servers/{upstream['id']}", json={"enabled": False, "store_id": second_store_id}, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["enabled"] is False and r.json()["store_id"] == second_store_id and r.json()["has_credential"] is True, r.text
+    r = client.patch(f"/upstream-servers/{upstream['id']}", json={"credential": "", "store_id": None}, headers=admin_headers)
+    assert r.status_code == 200 and r.json()["has_credential"] is False and r.json()["store_id"] is None, r.text
+    assert r.json()["enabled"] is False, r.text
+    _ok("edit changes only what is sent: disable, scope to a store, then remove the credential and the scope")
+
+    r = client.delete(f"/upstream-servers/{upstream['id']}", headers=admin_headers)
+    assert r.status_code == 204, r.text
+    r = client.delete(f"/upstream-servers/{upstream['id']}", headers=admin_headers)
+    assert r.status_code == 404, r.text
+    _ok("an upstream can be removed, once")
 
     _step("self-service revoke cannot target another user's key (IDOR check)")
     other_email = f"other-member-{unique}@example.com"
