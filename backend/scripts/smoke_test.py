@@ -8,8 +8,8 @@ password length bounds, single-admin enforcement (signup always 409s once
 bootstrapped, admin can't deactivate itself), member creation, admin-issued
 and self-service API key lifecycle (one active key per user), the member
 permission boundary (can't create stores or touch /team/members), store
-creation + member assignment, scoped store listing, one store per member
-with chat and gateway resolve scoped to it, password change, the
+creation + member assignment, scoped store listing, members in several
+stores with chat and gateway resolve scoped to them, password change, the
 emailed invite/reset links (only when the backend logs emails instead of
 sending them — otherwise skipped), the chat token flow, and the login rate
 limiter.
@@ -168,7 +168,7 @@ def main() -> int:
     resolved = r.json()
     assert resolved["user_id"] == member_id, resolved
     assert resolved["token_type"] == "api_key"
-    assert resolved["store_id"] is None, resolved  # not assigned to a store yet
+    assert resolved["store_ids"] == [], resolved  # not assigned to a store yet
     _ok("resolve returns correct user_id + token_type=api_key, and no store before assignment")
 
     _step("revoke the key")
@@ -189,17 +189,24 @@ def main() -> int:
     store_id = store["id"]
     _ok(f"store created: {store['slug']} -> {store['url']}")
 
-    _step("assign member to store")
-    r = client.post(f"/stores/{store_id}/members", json={"user_id": member_id}, headers=admin_headers)
-    assert r.status_code == 201, r.text
-    _ok("member assigned to store")
-
-    _step("member login + scoped store list")
+    _step("member login; unassigned, they see no store and cannot chat")
     r = client.post("/auth/login", json={"email": member_email, "password": temp_password})
     assert r.status_code == 200, r.text
     member_token = r.json()["access_token"]
     member_headers = {"Authorization": f"Bearer {member_token}"}
 
+    r = client.get("/stores", headers=member_headers)
+    assert r.status_code == 200 and r.json() == [], r.text
+    r = client.post("/chat/message", json={"message": "hello"}, headers=member_headers)
+    assert r.status_code == 403, r.text
+    _ok("a member with no store sees an empty store list and gets 403 from chat")
+
+    _step("assign member to store")
+    r = client.post(f"/stores/{store_id}/members", json={"user_id": member_id}, headers=admin_headers)
+    assert r.status_code == 201, r.text
+    _ok("member assigned to store")
+
+    _step("scoped store list")
     r = client.get("/stores", headers=member_headers)
     assert r.status_code == 200, r.text
     stores = r.json()
@@ -245,42 +252,48 @@ def main() -> int:
     member_key = r.json()["raw_key"]
     _ok("member can issue a new key after revoking the old one")
 
-    _step("one store per member; chat and gateway are scoped to it")
+    _step("a member can be in several stores; chat and gateway see those and no others")
     r = client.post("/stores", json={"name": f"Second Store {unique}"}, headers=admin_headers)
     assert r.status_code == 201, r.text
     second_store_id = r.json()["id"]
+    r = client.post("/stores", json={"name": f"Third Store {unique}"}, headers=admin_headers)
+    assert r.status_code == 201, r.text
+    third_store_id = r.json()["id"]  # the member is never added here
+
+    r = client.post(f"/stores/{second_store_id}/members", json={"user_id": member_id}, headers=admin_headers)
+    assert r.status_code == 201, r.text
+    _ok("a member already in one store can be added to a second")
 
     r = client.post(f"/stores/{second_store_id}/members", json={"user_id": member_id}, headers=admin_headers)
     assert r.status_code == 409, r.text
-    _ok("a member already in a store cannot be added to a second one")
+    _ok("adding the same member to the same store twice is rejected with 409")
 
     r = client.post(f"/stores/{second_store_id}/members", json={"user_id": admin_id}, headers=admin_headers)
     assert r.status_code == 400, r.text
     _ok("the admin cannot be pinned to a single store")
 
+    both = [store_id, second_store_id]
     r = client.post("/internal/auth/resolve", json={"token": member_key})
-    assert r.status_code == 200 and r.json()["store_id"] == store_id, r.text
+    assert r.status_code == 200 and r.json()["store_ids"] == both, r.text
     r = client.post("/chat/message", json={"message": "hello"}, headers=member_headers)
-    assert r.status_code == 200 and r.json()["store_id"] == store_id, r.text
-    _ok("gateway resolve and chat both report the member's own store, decided server-side")
+    assert r.status_code == 200 and r.json()["store_ids"] == both, r.text
+    r = client.get("/stores", headers=member_headers)
+    assert [s["id"] for s in r.json()] == both and third_store_id not in both, r.text
+    _ok("gateway resolve, chat and the store list all report exactly the member's two stores")
 
     r = client.delete(f"/stores/{store_id}/members/{member_id}", headers=admin_headers)
     assert r.status_code == 204, r.text
     r = client.post("/internal/auth/resolve", json={"token": member_key})
-    assert r.status_code == 200 and r.json()["store_id"] is None, r.text
+    assert r.status_code == 200 and r.json()["store_ids"] == [second_store_id], r.text
     r = client.post("/chat/message", json={"message": "hello"}, headers=member_headers)
-    assert r.status_code == 403, r.text
-    r = client.get("/stores", headers=member_headers)
-    assert r.status_code == 200 and r.json() == [], r.text
-    _ok("removing the member cuts off the same API key and login at once: no store anywhere")
-
-    r = client.post(f"/stores/{second_store_id}/members", json={"user_id": member_id}, headers=admin_headers)
-    assert r.status_code == 201, r.text
-    r = client.post("/internal/auth/resolve", json={"token": member_key})
-    assert r.status_code == 200 and r.json()["store_id"] == second_store_id, r.text
+    assert r.status_code == 200 and r.json()["store_ids"] == [second_store_id], r.text
     r = client.get("/stores", headers=member_headers)
     assert [s["id"] for s in r.json()] == [second_store_id], r.text
-    _ok("after moving, the member sees only the new store and nothing of the old one")
+    _ok("removing one store cuts it off at once, for the same API key and login, and keeps the other")
+
+    r = client.post("/chat/message", json={"message": "hello"}, headers=admin_headers)
+    assert r.status_code == 200 and {store_id, second_store_id, third_store_id} <= set(r.json()["store_ids"]), r.text
+    _ok("the admin's chat gets every store, so the gateway never needs to special-case the role")
 
     _step("self-service revoke cannot target another user's key (IDOR check)")
     other_email = f"other-member-{unique}@example.com"
@@ -377,7 +390,7 @@ def main() -> int:
     assert r.status_code == 200, r.text
     reply = r.json()
     assert reply["reply"]
-    assert reply["store_id"] == second_store_id, reply
+    assert reply["store_ids"] == [second_store_id], reply
     first_expiry = reply["chat_token_expires_at"]
     _ok("chat reply received, token expiry present, raw token never exposed")
 
@@ -385,6 +398,16 @@ def main() -> int:
     assert r.status_code == 200, r.text
     assert r.json()["chat_token_expires_at"] == first_expiry, "expected the SAME token to be reused"
     _ok("second chat message reuses the same session token (one session at a time)")
+
+    _step("chat has its own rate limit bucket, apart from the dashboard's")
+    for _ in range(12):  # chat allows a burst of 10 per minute
+        if client.post("/chat/message", json={"message": "burst"}, headers=member_headers).status_code == 429:
+            break
+    else:
+        raise AssertionError("expected chat to hit its 10/min limit within 12 messages")
+    r = client.get("/stores", headers=member_headers)
+    assert r.status_code == 200, r.text  # a shared bucket would still be empty here
+    _ok("an exhausted chat limit does not block the dashboard")
 
     _step("login rate limit (token bucket, capacity=5/min by IP)")
     saw_429 = False

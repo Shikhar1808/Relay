@@ -14,7 +14,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   const router = useRouter();
   const pathname = usePathname();
   const isAdmin = user?.role === "admin";
-  // A member works in exactly one store; it heads every page they see.
+  // A member works in one or more stores; they head every page they see.
   const { data: stores } = useData<Store[]>(user && !isAdmin ? "/stores" : null);
 
   useEffect(() => {
@@ -24,13 +24,19 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   if (!user) return <p className="p-8 text-ink-soft">Loading…</p>;
 
   const links = [
-    { href: "/stores", label: isAdmin ? "Stores" : "Store", icon: "stores" },
+    { href: "/stores", label: "Stores", icon: "stores" },
     ...(isAdmin ? [{ href: "/team", label: "Team", icon: "team" } as const] : []),
     { href: "/chat", label: "Chat", icon: "chat" },
     { href: "/api-key", label: "API key", icon: "key" },
     { href: "/account", label: "Account", icon: "account" },
   ] as const;
-  const scope = isAdmin ? "All stores" : stores === undefined ? "…" : (stores[0]?.name ?? "No store yet");
+  const scope = isAdmin
+    ? "All stores"
+    : stores === undefined
+      ? "…"
+      : stores.length === 0
+        ? "No store yet"
+        : stores.map((store) => store.name).join(", ");
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[15rem_1fr]">

@@ -11,4 +11,4 @@ class ChatMessageRequest(BaseModel):
 class ChatReplyOut(BaseModel):
     reply: str
     chat_token_expires_at: datetime
-    store_id: uuid.UUID | None  # the store this conversation is scoped to; None only for the admin
+    store_ids: list[uuid.UUID]  # the stores this conversation may use (every store for the admin)

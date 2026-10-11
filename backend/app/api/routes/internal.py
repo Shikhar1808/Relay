@@ -1,8 +1,8 @@
 """Service-to-service token resolution. This is what the MCP Gateway (a
 later phase) calls to turn a bearer token — either a member's gateway API
 key or a chat backend's short_chat_token — into a user identity, so it can
-attribute a tool call and check the caller's role — and into the one store
-that caller may touch (store_id), which is how a member is kept out of
+attribute a tool call and check the caller's role — and into the stores
+that caller may touch (store_ids), which is how a member is kept out of
 every other store's data whichever MCP client or chat they come through.
 
 No dashboard-JWT auth on this router: it is meant to be called by other
@@ -21,18 +21,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_redis
 from app.core.security import sha256_hex
-from app.db.models import ApiKey, ChatToken, Role, User
+from app.db.models import ApiKey, ChatToken, User
 from app.db.session import get_db
 from app.schemas.internal import ResolveTokenOut, ResolveTokenRequest
-from app.services.stores import store_for_member
+from app.services.stores import stores_for_user
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
 
 async def _resolved(db: AsyncSession, user: User, token_type: str) -> ResolveTokenOut:
-    store = None if user.role == Role.admin else await store_for_member(db, user.id)
+    stores = await stores_for_user(db, user)
     return ResolveTokenOut(
-        user_id=user.id, role=user.role, token_type=token_type, store_id=store.id if store else None
+        user_id=user.id, role=user.role, token_type=token_type, store_ids=[store.id for store in stores]
     )
 
 

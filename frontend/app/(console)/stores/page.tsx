@@ -26,7 +26,7 @@ export default function StoresPage() {
 
   if (error) return <Notice tone="error">{error}</Notice>;
   if (!stores) return <p className="text-ink-soft">Loading…</p>;
-  return user?.role === "admin" ? <AdminStores stores={stores} reload={reload} /> : <MemberStore store={stores[0]} />;
+  return user?.role === "admin" ? <AdminStores stores={stores} reload={reload} /> : <MemberStores stores={stores} />;
 }
 
 function StoreAddress({ store }: { store: Store }) {
@@ -43,8 +43,8 @@ function StatusPill({ status }: { status: Store["status"] }) {
   return <Pill tone={status === "ready" ? "good" : status === "failed" ? "muted" : "warn"}>{status}</Pill>;
 }
 
-function MemberStore({ store }: { store?: Store }) {
-  if (!store) {
+function MemberStores({ stores }: { stores: Store[] }) {
+  if (stores.length === 0) {
     return (
       <PageTitle title="You're not in a store yet">
         Ask your admin to add you to a store. Chat and your API key start working as soon as they do.
@@ -53,27 +53,30 @@ function MemberStore({ store }: { store?: Store }) {
   }
   const nextSteps = [
     { href: "/chat", title: "Ask the agent", text: "Orders, products and stock, in plain words." },
-    { href: "/api-key", title: "Get your API key", text: "Reach this store from Claude Code or Cursor." },
+    { href: "/api-key", title: "Get your API key", text: "Reach your stores from Claude Code or Cursor." },
   ];
   return (
     <>
-      <PageTitle title="Your store">
-        You work in {store.name}. Chat and your API key only reach this store.
-      </PageTitle>
-      <Card className="max-w-xl">
-        <dl className="grid grid-cols-[6rem_1fr] gap-y-3">
-          <dt className="text-ink-soft">Address</dt>
-          <dd>
-            <StoreAddress store={store} />
-          </dd>
-          <dt className="text-ink-soft">Status</dt>
-          <dd>
-            <StatusPill status={store.status} />
-          </dd>
-          <dt className="text-ink-soft">Created</dt>
-          <dd>{formatDate(store.created_at)}</dd>
-        </dl>
-      </Card>
+      <PageTitle title="Your stores">Chat and your API key reach only the stores listed here.</PageTitle>
+      <div className="space-y-4">
+        {stores.map((store) => (
+          <Card key={store.id} className="max-w-xl">
+            <h2 className="mb-3 font-display text-xl font-semibold break-words">{store.name}</h2>
+            <dl className="grid grid-cols-[6rem_1fr] gap-y-3">
+              <dt className="text-ink-soft">Address</dt>
+              <dd>
+                <StoreAddress store={store} />
+              </dd>
+              <dt className="text-ink-soft">Status</dt>
+              <dd>
+                <StatusPill status={store.status} />
+              </dd>
+              <dt className="text-ink-soft">Created</dt>
+              <dd>{formatDate(store.created_at)}</dd>
+            </dl>
+          </Card>
+        ))}
+      </div>
       <div className="mt-4 grid max-w-xl gap-4 sm:grid-cols-2">
         {nextSteps.map(({ href, title, text }) => (
           <Link
@@ -99,7 +102,7 @@ function AdminStores({ stores, reload }: { stores: Store[]; reload: () => Promis
 
   return (
     <>
-      <PageTitle title="Stores">Create stores and choose who works in each. A member can be in one store at a time.</PageTitle>
+      <PageTitle title="Stores">Create stores and choose who works in each. A member can be in several stores.</PageTitle>
 
       <Card className="max-w-xl">
         <form

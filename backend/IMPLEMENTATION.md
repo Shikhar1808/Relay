@@ -17,8 +17,8 @@ A FastAPI + PostgreSQL + Redis backend covering:
   member can self-service their own (one active key per user, enforced in
   the DB, not just the route)
 - Store creation — **stub only**, returns a fake URL (see "What's a stub" below)
-- Assigning members to stores, one store per member, with chat and the
-  gateway token-resolve scoped to that store
+- Assigning members to one or more stores, with chat and the gateway
+  token-resolve scoped to those stores
 - A demo chat agent that mints short-lived chat tokens server-side (one
   session reused per user, not one per message)
 - An internal token-resolve endpoint the future MCP Gateway will call
@@ -49,7 +49,7 @@ There are exactly two roles, and exactly one admin account can ever exist.
 **Member can:**
 - Log in, use the chat agent (one session token, reused across messages —
   see "known race" below for the one edge case)
-- See only the one store they're assigned to — in the dashboard, in chat,
+- See only the stores they're assigned to — in the dashboard, in chat,
   and through any MCP client (see "Stores and members")
 - Issue, list, and revoke **their own** gateway API key — never anyone
   else's (the self-service routes take no user-id path parameter; identity
@@ -80,34 +80,36 @@ Two entry points, same guarded helper (`create_admin_if_absent` in
 Leave `ADMIN_EMAIL`/`ADMIN_PASSWORD` blank in `.env` to disable path 1 and
 force the explicit signup flow instead.
 
-## Stores and members: one store each, and how scoping works
+## Stores and members: several stores each, and how scoping works
 
-A member belongs to **at most one store**. This is a database rule
-(`UNIQUE (user_id)` on `store_members`), not just a route check. Adding a
-member who is already in a store returns 409; to move someone, remove them
-(`DELETE /stores/{id}/members/{user_id}`) and assign them again. The admin
-is never assigned to a store (400) — the admin can act on every store.
+A member can belong to **several stores**, which is what lets one question
+span stores through the gateway. A database rule
+(`UNIQUE (store_id, user_id)` on `store_members`) only stops adding the
+same member to the same store twice, which returns 409. To take someone out
+of a store: `DELETE /stores/{id}/members/{user_id}`. The admin is never
+assigned to a store (400) — the admin can act on every store.
 
 Everything that shows a member store data asks one function,
-`store_for_member` in `app/services/stores.py`, which reads the database fresh each
-time. So a move or removal takes effect on the member's very next request,
-including for a chat session or API key issued earlier.
+`stores_for_user` in `app/services/stores.py` (every store for the admin, a member's own for a member), which reads the database fresh each
+time. So an assignment or removal takes effect on the member's very next
+request, including for a chat session or API key issued earlier.
 
-| Where a member could see store data | How it is limited to their store |
+| Where a member could see store data | How it is limited to their stores |
 |---|---|
-| Dashboard: `GET /stores` | Returns their one store, or `[]` |
-| Chat: `POST /chat/message` | The store is taken from the logged-in user, never from the message. A member with no store gets 403 |
-| Any MCP client (Claude Code, Cursor, the chat agent) through the gateway | `/internal/auth/resolve` returns `store_id` for the API key or chat token. A member with no store gets `store_id: null` |
+| Dashboard: `GET /stores` | Returns their stores, oldest first, or `[]` |
+| Chat: `POST /chat/message` | The stores are taken from the logged-in user, never from the message. A member with no store gets 403 |
+| Any MCP client (Claude Code, Cursor, the chat agent) through the gateway | `/internal/auth/resolve` returns `store_ids` for the API key or chat token. A member with no store gets `store_ids: []`; the admin gets every store, so the gateway filters the same way for everyone and never special-cases the role |
 
 **What is NOT enforced yet, because it does not exist yet:**
 
-- The MCP Gateway. When it is built it must take the store from
-  `store_id` in the resolve response and nothing else — never from a tool
+- The MCP Gateway. When it is built it must take the stores from
+  `store_ids` in the resolve response and nothing else — never from a tool
   argument, a header, or anything the LLM wrote — and must refuse a member
-  whose `store_id` is null. This backend only supplies the answer; the
-  gateway is what has to obey it.
+  whose `store_ids` is empty. Tool names must say which store they act on,
+  because one member can now reach several. This backend only supplies the
+  answer; the gateway is what has to obey it.
 - The real chat agent. `_demo_agent_reply` is a stub. The real one must put
-  only that one store's data into the LLM prompt and tool results.
+  only those stores' data into the LLM prompt and tool results.
 
 ## Database migrations
 
@@ -233,7 +235,7 @@ backend/
       bootstrap.py         Single-admin creation, shared by startup + signup route
       mailer.py            SMTP sender + plain-text email templates
       auth_tokens.py       Issue/redeem single-use invite and reset tokens
-      stores.py            Store slug generation; store_for_member (the scoping rule)
+      stores.py            Store slug generation; stores_for_user (the scoping rule)
     api/
       routes/
         auth.py            Login, admin signup, /auth/me, change/forgot/set password
@@ -271,12 +273,12 @@ backend/
 | GET | `/team/me/api-keys` | JWT | user, 60/min | List own keys |
 | POST | `/team/me/api-keys/{key_id}/revoke` | JWT | user, 60/min | Revoke own key; 404 if the id belongs to someone else |
 | POST | `/stores` | JWT (admin) | user, 60/min | **Stub.** Creates a DB row, returns a fake URL |
-| GET | `/stores` | JWT | user, 60/min | Admin sees all stores; member sees only their one store |
+| GET | `/stores` | JWT | user, 60/min | Admin sees all stores; member sees only their stores |
 | POST | `/stores/{id}/members` | JWT (admin) | user, 60/min | Assigns a member to a store; 409 if they already belong to one, 400 for the admin |
 | DELETE | `/stores/{id}/members/{user_id}` | JWT (admin) | user, 60/min | Removes a member from a store, effective immediately |
 | GET | `/stores/{id}/members` | JWT (admin) | user, 60/min | Lists a store's assigned members |
 | POST | `/chat/message` | JWT | user, 10/min | Demo agent reply scoped to the caller's store; mints/reuses a short_chat_token; 403 for a member with no store |
-| POST | `/internal/auth/resolve` | none (internal) | none | Resolves an API key or chat token to a user identity and the one store they may touch |
+| POST | `/internal/auth/resolve` | none (internal) | none | Resolves an API key or chat token to a user identity and the stores they may touch |
 
 ## Rate limiting: why token bucket
 
@@ -327,7 +329,7 @@ turns into a clean `409` instead of a `500`:
 - Member email uniqueness (`users.email` is `UNIQUE`) — `team.py: create_member`
 - Store slug uniqueness (`stores.slug` is `UNIQUE`) — `stores.py: create_store`
   retries up to 3 times with a fresh slug before giving up
-- One store per member (`UniqueConstraint(user_id)` on `store_members`) — `stores.py: assign_member`
+- A member can be added to a store only once (`UniqueConstraint(store_id, user_id)` on `store_members`) — `stores.py: assign_member`
 - **One active API key per user** — a partial unique index,
   `UNIQUE (user_id) WHERE NOT revoked`, on `api_keys` (`app/db/models/api_key.py`).
   This is enforced at the DB level, not just the application's pre-check in

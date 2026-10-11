@@ -36,10 +36,10 @@ class Store(Base):
 
 
 class StoreMember(Base):
-    """Which store a member works for. The unique constraint on user_id alone
-    is the rule "a member belongs to at most one store" — everything that
+    """Which stores a member works for. A member may be in several; the unique
+    pair only stops adding them to the same store twice. Everything that
     scopes a member's data (store listing, chat, the gateway's token resolve)
-    relies on it via app/services/stores.py: store_for_member.
+    reads it via app/services/stores.py: stores_for_user.
     """
 
     __tablename__ = "store_members"
@@ -49,4 +49,4 @@ class StoreMember(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (UniqueConstraint("user_id", name="uq_store_members_one_store_per_user"),)
+    __table_args__ = (UniqueConstraint("store_id", "user_id", name="uq_store_members_store_user"),)

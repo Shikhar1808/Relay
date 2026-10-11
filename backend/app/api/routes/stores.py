@@ -15,7 +15,7 @@ from app.db.session import get_db
 from app.schemas.auth import UserOut
 from app.schemas.stores import AssignMemberRequest, CreateStoreRequest, StoreMemberOut, StoreOut
 from app.services.mailer import notice_email, send_email
-from app.services.stores import store_for_member, unique_slug
+from app.services.stores import stores_for_user, unique_slug
 
 router = APIRouter(
     prefix="/stores",
@@ -59,11 +59,7 @@ async def list_stores(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Store]:
-    if user.role == Role.admin:
-        result = await db.execute(select(Store).order_by(Store.created_at))
-        return list(result.scalars().all())
-    store = await store_for_member(db, user.id)
-    return [store] if store else []
+    return await stores_for_user(db, user)
 
 
 @router.post("/{store_id}/members", response_model=StoreMemberOut, status_code=status.HTTP_201_CREATED)
@@ -90,9 +86,7 @@ async def assign_member(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Member already belongs to a store — remove them from it first"
-        ) from exc
+        raise HTTPException(status.HTTP_409_CONFLICT, "Member is already in this store") from exc
     await db.refresh(assignment)
 
     background.add_task(
@@ -112,7 +106,7 @@ async def remove_member(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Takes effect immediately: the member's chat session and gateway API key
-    lose access to the store on their next call (see store_for_member).
+    lose access to the store on their next call (see stores_for_user).
     """
     result = await db.execute(
         select(StoreMember).where(StoreMember.store_id == store_id, StoreMember.user_id == user_id)

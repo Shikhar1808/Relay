@@ -38,7 +38,7 @@ export default function ChatPage() {
       <PageTitle title="Chat">
         {user?.role === "admin"
           ? "Ask the agent about any store."
-          : "Ask the agent about your store. It can only see the store you work in."}
+          : "Ask the agent about your stores. It can only see the stores you work in."}
       </PageTitle>
 
       <div className="flex h-[calc(100dvh-21rem)] min-h-80 max-w-3xl flex-col rounded-2xl border border-line bg-white lg:h-[calc(100dvh-15rem)]">
@@ -94,7 +94,7 @@ export default function ChatPage() {
           <textarea
             id="message"
             rows={1}
-            placeholder="Ask about your store. Enter sends, Shift+Enter adds a line."
+            placeholder="Ask about your stores. Enter sends, Shift+Enter adds a line."
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(event) => {

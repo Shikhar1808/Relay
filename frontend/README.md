@@ -41,7 +41,7 @@ app/
   login, forgot-password,   Signed-out pages. Emailed invite and reset links
   set-password                open /set-password#token=...
   (console)/                Signed-in pages, behind the guard in layout.tsx
-    stores/                   A member's one store; for the admin, all stores and who is in each
+    stores/                   A member's stores; for the admin, all stores and who is in each
     team/                     Admin only: add, deactivate, resend invite, manage a member's API key
     chat/  api-key/  account/
 components/                 Buttons, fields, the one-time secret box, the API key manager

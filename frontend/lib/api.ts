@@ -33,7 +33,7 @@ export type ApiKey = {
 export type ApiKeyCreated = { id: string; raw_key: string; prefix: string; name: string | null };
 export type MemberCreated = { user: User; temporary_password: string };
 export type TokenResponse = { access_token: string; user: User };
-export type ChatReply = { reply: string; chat_token_expires_at: string; store_id: string | null };
+export type ChatReply = { reply: string; chat_token_expires_at: string; store_ids: string[] };
 
 export class ApiError extends Error {
   constructor(

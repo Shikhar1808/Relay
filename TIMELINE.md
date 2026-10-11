@@ -4,7 +4,7 @@ Progress against the plan in `extras/Urumi FDE — Full Implementation Guide.pdf
 and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on Kubernetes.pdf`.
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 10 Oct 2026
+- **Last updated:** 11 Oct 2026
 - **Now:** Oct 9–11 block, three items open (upstream registry, credential encryption, audit log schema)
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
@@ -15,7 +15,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [x] Postgres platform database
 - [x] Redis
 - [x] Tables: `users`, `api_keys` (hashed), `short_chat_tokens`
-- [x] Store membership table (`store_members`, one store per member)
+- [x] Store membership table (`store_members`, a member can be in several stores)
 - [x] Database migrations (Alembic)
 - [x] Auth endpoints: admin signup, login, issue and revoke API keys
 - [ ] Table: `upstream_servers` with encrypted credentials
@@ -116,9 +116,12 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 - Invite, password reset and notice emails (Resend over SMTP)
 - Change password, forgot password, set password by emailed link
-- One store per member, enforced in chat and in `/internal/auth/resolve`
+- Members can belong to several stores (for cross-store questions); chat and `/internal/auth/resolve` return `store_ids`, and the gateway must filter on them
+- Chat and dashboard rate limits no longer share one bucket per user
 
 ## Open questions
 
-- The assignment says every member can use every enabled server. One store per member narrows that. Decide before the demo: both demo users in the one store, and the bonus cross-store question asked as the admin.
+- The assignment says every member can use every enabled server. A member can now be in several stores, but is still limited to those. Decide before the demo whether both demo users get both stores (then the cross-store question works for either, not only the admin).
+- Gateway work to plan with this: upstreams need a `store_id` (null = shared), tool names must say which store they act on, and the gateway filters on `store_ids` from resolve.
+- Whether the gateway is our own or a fork of `dunialabs/peta-core` is undecided. A spike on 11 Oct showed it runs standalone with an admin API and static per-user tokens, but needs patches for tool names (`slug__tool`), upstream health and audit detail, plus an encryption bridge from our backend.
 - Chat tokens are not revoked on sign-out (the guide says they should be).

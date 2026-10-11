@@ -88,7 +88,8 @@ def user_rate_limit(capacity: int, refill_per_minute: float):
         user: User = Depends(get_current_user),
         redis: Redis = Depends(get_redis),
     ) -> None:
-        key = f"ratelimit:user:{user.id}"
+        # Capacity and rate are in the key so each limiter (chat vs dashboard) has its own bucket.
+        key = f"ratelimit:user:{user.id}:{capacity}:{refill_per_minute}"
         allowed, remaining = await check_token_bucket(redis, key, capacity, refill_per_sec)
         if not allowed:
             retry_after = _retry_after(remaining, 1, refill_per_sec)
