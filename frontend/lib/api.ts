@@ -32,8 +32,28 @@ export type ApiKey = {
 
 export type ApiKeyCreated = { id: string; raw_key: string; prefix: string; name: string | null };
 export type MemberCreated = { user: User; temporary_password: string };
-export type TokenResponse = { access_token: string; user: User };
+/** What sign in answers. It also carries the token itself, for scripts; the dashboard never touches it. */
+export type TokenResponse = { user: User };
 export type ChatReply = { reply: string; chat_token_expires_at: string; store_ids: string[] };
+
+/** One audit row: from the gateway's log, or (category "platform") a team, key or store change. */
+export type AuditEvent = {
+  seq: number;
+  ts: string;
+  severity: "INFO" | "NOTICE" | "WARNING" | "ERROR";
+  category: string;
+  action: string;
+  outcome: string;
+  user_id: string | null;
+  user_email: string | null;
+  upstream: string | null;
+  tool: string | null;
+  duration_ms: number | null;
+  target: string | null;
+  client_ip: string | null;
+  detail: Record<string, unknown> | null;
+};
+export type ChainCheck = { intact: boolean; verified: number; last_hash: string; broken_seq: number | null };
 
 export class ApiError extends Error {
   constructor(
@@ -45,13 +65,6 @@ export class ApiError extends Error {
 }
 
 export const SIGNED_OUT_EVENT = "urumi:signed-out";
-
-const TOKEN_KEY = "urumi_token";
-// shortcut: the session token lives in localStorage, readable by any script on the page;
-// move it to an httpOnly cookie set by the backend if third-party scripts are ever added.
-export const getToken = () => localStorage.getItem(TOKEN_KEY);
-export const setToken = (token: string | null) =>
-  token ? localStorage.setItem(TOKEN_KEY, token) : localStorage.removeItem(TOKEN_KEY);
 
 let apiUrl: Promise<string> | undefined;
 const baseUrl = () =>
@@ -71,23 +84,21 @@ function describe(status: number, body: unknown): string {
 }
 
 export async function api<T = void>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
-  const token = getToken();
   let response: Response;
   try {
     response = await fetch((await baseUrl()) + path, {
       method: options.method ?? (options.body === undefined ? "GET" : "POST"),
-      headers: {
-        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      // The session is a cookie the API sets at sign in. No script on this page can read it;
+      // the browser sends it along by itself.
+      credentials: "include",
+      headers: options.body === undefined ? {} : { "Content-Type": "application/json" },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
   } catch {
     throw new ApiError(0, "Can't reach the server. Check your connection and try again.");
   }
-  if (response.status === 401 && token) {
-    // The session expired or the account was deactivated: start over at sign in.
-    setToken(null);
+  if (response.status === 401) {
+    // Not signed in (any more): the session expired or the account was deactivated. Start over at sign in.
     window.dispatchEvent(new Event(SIGNED_OUT_EVENT)); // AuthProvider listens and clears the user
   }
   if (response.status === 204) return undefined as T;

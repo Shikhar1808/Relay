@@ -106,6 +106,7 @@ const pillStyles = {
   good: "bg-good-wash text-good",
   accent: "bg-accent-wash text-accent-deep",
   warn: "bg-brass-wash text-brass",
+  danger: "bg-danger/10 text-danger",
   muted: "bg-canvas text-ink-soft",
 };
 
@@ -168,6 +169,7 @@ const iconPaths = {
   chat: "M4 5.5h16v11h-9.5L6 20v-3.5H4z",
   key: "M14.5 9.5a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM13.2 12.7 20 19.5M17 16.5l1.8-1.8",
   account: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4.5 20.5c0-3.6 3.3-6 7.5-6s7.5 2.4 7.5 6",
+  audit: "M7 3.5h10A1.5 1.5 0 0 1 18.5 5v14a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5ZM9 8.5h6M9 12h6M9 15.5h3.5",
   send: "M12 19V5M5.5 11.5 12 5l6.5 6.5",
 };
 
@@ -221,3 +223,5 @@ export function useAction() {
 }
 
 export const formatDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
+export const formatDateTime = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" });

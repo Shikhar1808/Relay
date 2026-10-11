@@ -2,10 +2,10 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
-import { api, getToken, setToken, SIGNED_OUT_EVENT, type TokenResponse, type User } from "./api";
+import { api, SIGNED_OUT_EVENT, type TokenResponse, type User } from "./api";
 
 type Auth = {
-  /** undefined while the saved session is being checked, null when signed out. */
+  /** undefined while the API is being asked who is signed in, null when signed out. */
   user: User | null | undefined;
   login: (email: string, password: string) => Promise<void>;
   /** Used after an emailed link sets a password: the API answers with a session. */
@@ -19,21 +19,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null | undefined>(undefined);
 
   useEffect(() => {
-    const restore = getToken() ? api<User>("/auth/me") : Promise.resolve(null);
-    restore.then(setUser).catch(() => {
-      setToken(null);
-      setUser(null);
-    });
+    localStorage.removeItem("urumi_token"); // left behind by the version that kept the session there
+    // The session cookie cannot be seen from here, so the API is asked who is signed in.
+    api<{ user: User | null }>("/auth/session")
+      .then((session) => setUser(session.user))
+      .catch(() => setUser(null));
 
     const onSignedOut = () => setUser(null);
     window.addEventListener(SIGNED_OUT_EVENT, onSignedOut);
     return () => window.removeEventListener(SIGNED_OUT_EVENT, onSignedOut);
   }, []);
 
-  const adopt = useCallback((session: TokenResponse) => {
-    setToken(session.access_token);
-    setUser(session.user);
-  }, []);
+  const adopt = useCallback((session: TokenResponse) => setUser(session.user), []);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -43,8 +40,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    setToken(null);
-    setUser(null);
+    // The API removes the cookie and stops the token in it from working. If it cannot be reached
+    // this page still forgets the user, but the session lives on and a reload signs back in.
+    void api("/auth/logout", { method: "POST" })
+      .catch(() => undefined)
+      .then(() => setUser(null));
   }, []);
 
   return <AuthContext value={{ user, login, adopt, logout }}>{children}</AuthContext>;

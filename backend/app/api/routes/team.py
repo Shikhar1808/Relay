@@ -8,6 +8,9 @@ RBAC summary:
   - Member: cannot touch /members/* routes (403 via require_admin). Can
     manage only their OWN key through /me/api-keys/* — issue, list, revoke.
 
+Every change here is written to admin_events in the same transaction
+(app/services/admin_audit.py). A raw key or password is never part of it.
+
 Invariant enforced at both issuance paths (admin-issues-for-member and
 member-issues-for-self): a user may have at most one active (non-revoked)
 gateway API key at a time. Revoke before rotating.
@@ -15,7 +18,7 @@ gateway API key at a time. Revoke before rotating.
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +35,7 @@ from app.schemas.team import (
     CreateMemberRequest,
     MemberCreatedOut,
 )
+from app.services.admin_audit import record
 from app.services.auth_tokens import issue_auth_token
 from app.services.mailer import invite_email, notice_email, send_email
 
@@ -55,6 +59,7 @@ async def _assert_no_active_key(db: AsyncSession, user_id: uuid.UUID) -> None:
 async def create_member(
     body: CreateMemberRequest,
     background: BackgroundTasks,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> MemberCreatedOut:
@@ -66,6 +71,7 @@ async def create_member(
         role=Role.member,
     )
     db.add(member)
+    record(db, request, admin, "member.create", member.email)
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -83,6 +89,7 @@ async def create_member(
 async def resend_invite(
     member_id: uuid.UUID,
     background: BackgroundTasks,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -91,7 +98,8 @@ async def resend_invite(
     if not member or not member.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not found")
 
-    token = await issue_auth_token(db, member.id, TokenPurpose.invite)
+    record(db, request, admin, "member.invite_resend", member.email)
+    token = await issue_auth_token(db, member.id, TokenPurpose.invite)  # commits, and the record with it
     background.add_task(send_email, member.email, *invite_email(member.name, token))
 
 
@@ -108,6 +116,7 @@ async def list_members(
 async def deactivate_member(
     member_id: uuid.UUID,
     background: BackgroundTasks,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -118,6 +127,8 @@ async def deactivate_member(
         raise HTTPException(status.HTTP_409_CONFLICT, "The admin account cannot be deactivated")
     was_active = member.is_active
     member.is_active = False
+    if was_active:
+        record(db, request, admin, "member.deactivate", member.email)
     await db.commit()
 
     if was_active:
@@ -140,6 +151,7 @@ async def issue_api_key(
     member_id: uuid.UUID,
     body: CreateApiKeyRequest,
     background: BackgroundTasks,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyCreatedOut:
@@ -151,6 +163,7 @@ async def issue_api_key(
     raw_key, key_hash, prefix = generate_api_key()
     key = ApiKey(user_id=member.id, key_hash=key_hash, prefix=prefix, name=body.name)
     db.add(key)
+    record(db, request, admin, "api_key.issue", member.email, prefix=prefix)
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -183,6 +196,7 @@ async def revoke_api_key(
     member_id: uuid.UUID,
     key_id: uuid.UUID,
     background: BackgroundTasks,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKey:
@@ -190,13 +204,15 @@ async def revoke_api_key(
     if not key or key.user_id != member_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found")
 
+    member = await db.get(User, member_id)
     was_active = not key.revoked
     key.revoked = True
     key.revoked_at = datetime.now(timezone.utc)
+    if was_active:
+        record(db, request, admin, "api_key.revoke", member.email if member else str(member_id), prefix=key.prefix)
     await db.commit()
     await db.refresh(key)
 
-    member = await db.get(User, member_id)
     if was_active and member:
         background.add_task(
             send_email,
@@ -214,6 +230,7 @@ async def revoke_api_key(
 @router.post("/me/api-keys", response_model=ApiKeyCreatedOut, status_code=status.HTTP_201_CREATED)
 async def issue_my_api_key(
     body: CreateApiKeyRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyCreatedOut:
@@ -222,6 +239,7 @@ async def issue_my_api_key(
     raw_key, key_hash, prefix = generate_api_key()
     key = ApiKey(user_id=user.id, key_hash=key_hash, prefix=prefix, name=body.name)
     db.add(key)
+    record(db, request, user, "api_key.issue", user.email, prefix=prefix)
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -244,6 +262,7 @@ async def list_my_api_keys(
 @router.post("/me/api-keys/{key_id}/revoke", response_model=ApiKeyOut)
 async def revoke_my_api_key(
     key_id: uuid.UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKey:
@@ -251,6 +270,8 @@ async def revoke_my_api_key(
     if not key or key.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found")
 
+    if not key.revoked:
+        record(db, request, user, "api_key.revoke", user.email, prefix=key.prefix)
     key.revoked = True
     key.revoked_at = datetime.now(timezone.utc)
     await db.commit()

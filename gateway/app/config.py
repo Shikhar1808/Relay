@@ -3,8 +3,9 @@ match env vars case-insensitively. This service imports nothing from the
 backend; what the two share is listed here as plain configuration.
 """
 import base64
+from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,17 @@ class Settings(BaseSettings):
     # Read-only connection to the Platform DB, for the upstream_servers table only.
     platform_database_url: str
     redis_url: str = "redis://localhost:6379/0"
+
+    # The audit log's own database (deploy/db-init.sh creates it): rows can be added and read, nothing else.
+    logs_database_url: str
+    # Links the audit rows into a chain that shows tampering. Only the gateway holds it.
+    audit_hmac_key: str = Field(min_length=32)
+    # How much of a tool call is kept: see app/audit.py.
+    audit_detail: Literal["minimal", "standard", "full"] = "standard"
+    # Refused logins one address may make in a minute before it gets 429.
+    auth_failures_per_minute: int = 20
+    # Tool calls one user may make in a minute, as a token bucket: also the size of a burst (app/limits.py).
+    calls_per_minute: int = 120
 
     # Where a bearer token is turned into a user (the backend's /internal/auth/resolve),
     # and the shared secret that route demands.
@@ -34,7 +46,7 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = []
 
     port: int = 8080  # public: /mcp only
-    private_port: int = 9090  # cluster-only: health (never put this behind the Ingress)
+    private_port: int = 9090  # cluster-only: health, and the audit log for the backend (never put this behind the Ingress)
 
     refresh_seconds: float = 30  # how often the registry and every upstream's tools are re-read
     list_timeout_seconds: float = 5

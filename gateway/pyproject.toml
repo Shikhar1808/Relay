@@ -21,7 +21,9 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# `uv run pytest` from this directory. These tests need no running stack.
+# `uv run pytest` from this directory. These tests need no running stack,
+# except the ones marked `live`, which skip themselves when it is not up.
 pythonpath = ["."]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = ["live: needs the compose stack (Redis on localhost:6379)"]

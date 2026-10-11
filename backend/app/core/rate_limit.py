@@ -16,9 +16,11 @@ The check-and-decrement has to be atomic or two concurrent requests can both
 read "1 token left" and both proceed. A Lua script makes the read-refill-
 decrement sequence a single atomic Redis operation.
 """
+import functools
 import time
 
 from redis.asyncio import Redis
+from redis.commands.core import AsyncScript
 
 _TOKEN_BUCKET_SCRIPT = """
 local capacity = tonumber(ARGV[1])
@@ -49,10 +51,13 @@ redis.call("EXPIRE", KEYS[1], math.ceil(capacity / refill_rate) + 1)
 
 return {allowed, tokens}
 """
-# Shortcut: uses EVAL (recompiles script server-side each call) instead of
-# SCRIPT LOAD + EVALSHA caching. Redis caches script bodies internally by
-# SHA regardless, so the cost is negligible at this project's scale — switch
-# to explicit EVALSHA only if profiling shows otherwise.
+
+
+@functools.cache  # one per client. Registering only works out the script's id; nothing is sent yet.
+def _bucket(redis: Redis) -> AsyncScript:
+    """The script, called by its id (EVALSHA) instead of being sent whole on every check.
+    If Redis does not know the id, after a restart for example, the helper sends the script once and retries."""
+    return redis.register_script(_TOKEN_BUCKET_SCRIPT)
 
 
 async def check_token_bucket(
@@ -60,5 +65,5 @@ async def check_token_bucket(
 ) -> tuple[bool, float]:
     """Returns (allowed, tokens_remaining)."""
     now = time.time()
-    allowed, remaining = await redis.eval(_TOKEN_BUCKET_SCRIPT, 1, key, capacity, refill_per_sec, now, cost)
+    allowed, remaining = await _bucket(redis)(keys=[key], args=[capacity, refill_per_sec, now, cost])
     return bool(int(allowed)), float(remaining)

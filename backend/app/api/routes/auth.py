@@ -1,16 +1,28 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy import delete, select
+import time
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+from redis.asyncio import Redis
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, ip_rate_limit
+from app.core.config import settings
+from app.core.deps import (
+    SESSION_COOKIE,
+    get_current_user,
+    get_optional_user,
+    get_redis,
+    ip_rate_limit,
+    revoked_session_key,
+)
 from app.core.security import create_access_token, hash_password, verify_password
-from app.db.models import AuthToken, TokenPurpose, User
+from app.db.models import AuthToken, ChatToken, TokenPurpose, User
 from app.db.session import AsyncSessionLocal, get_db
 from app.schemas.auth import (
     AdminSignupRequest,
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
+    SessionOut,
     SetPasswordRequest,
     TokenResponse,
     UserOut,
@@ -29,6 +41,22 @@ _ip_rate_limit = ip_rate_limit(capacity=5, refill_per_minute=5)
 _DUMMY_HASH = hash_password("no account has this password")  # see login()
 
 
+def _cookie_flags() -> dict:
+    """How the session cookie is set and, with the same flags, removed."""
+    return {
+        "httponly": True,  # page scripts cannot read it, so a script that should not be there cannot steal the session
+        "samesite": "strict",  # requests made from other sites do not carry it
+        "secure": settings.app_base_url.startswith("https://"),  # over https, never sent in the clear
+    }
+
+
+def _start_session(response: Response, user: User) -> TokenResponse:
+    """Signs the user in. A browser keeps the token as the cookie; scripts and tests take it from the body."""
+    token = create_access_token(user.id, user.role.value)
+    response.set_cookie(SESSION_COOKIE, token, max_age=settings.jwt_expire_minutes * 60, **_cookie_flags())
+    return TokenResponse(access_token=token, user=UserOut.model_validate(user))
+
+
 async def _set_password(db: AsyncSession, user: User, new_password: str, background: BackgroundTasks) -> None:
     """Every password change goes through here: it also kills any outstanding
     invite/reset links for the user and emails them a security notice.
@@ -44,7 +72,7 @@ async def _set_password(db: AsyncSession, user: User, new_password: str, backgro
 
 
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(_ip_rate_limit)])
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
@@ -54,8 +82,44 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token
     if not user or not user.is_active or not password_ok:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
-    token = create_access_token(user.id, user.role.value)
-    return TokenResponse(access_token=token, user=UserOut.model_validate(user))
+    return _start_session(response, user)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    request: Request,
+    response: Response,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> None:
+    """Signs out for real: the browser forgets the cookie, the token in it stops
+    working at once, and so do the chat tokens minted for this user."""
+    response.delete_cookie(SESSION_COOKIE, **_cookie_flags())
+    if user is None:
+        return
+    token, expires_at = request.state.session
+    # Remembered only as long as the token could still have been used.
+    await redis.set(revoked_session_key(token), 1, ex=max(1, int(expires_at - time.time())))
+
+    revoked = await db.execute(
+        update(ChatToken)
+        .where(ChatToken.user_id == user.id, ChatToken.revoked.is_(False))
+        .values(revoked=True)
+        .returning(ChatToken.token_hash)
+    )
+    hashes = revoked.scalars().all()
+    await db.commit()
+    if hashes:
+        # /internal/auth/resolve looks here first, so the cached copies must go too.
+        await redis.delete(*(f"chat_token:{token_hash}" for token_hash in hashes))
+
+
+@router.get("/session", response_model=SessionOut)
+async def session(user: User | None = Depends(get_optional_user)) -> SessionOut:
+    """Who is signed in, if anyone. Unlike /auth/me this answers 200 either way,
+    so a page can ask on every load without causing an error when nobody is."""
+    return SessionOut(user=UserOut.model_validate(user) if user else None)
 
 
 @router.get("/me", response_model=UserOut)
@@ -124,6 +188,7 @@ async def _send_reset_link(email: str) -> None:
 async def set_password(
     body: SetPasswordRequest,
     background: BackgroundTasks,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     """Redeems an emailed invite or reset token and logs the user in."""
@@ -133,5 +198,4 @@ async def set_password(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired link")
 
     await _set_password(db, user, body.new_password, background)
-    token = create_access_token(user.id, user.role.value)
-    return TokenResponse(access_token=token, user=UserOut.model_validate(user))
+    return _start_session(response, user)

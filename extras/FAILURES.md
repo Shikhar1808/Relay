@@ -58,8 +58,8 @@ run against the live compose stack. `./run_tests.sh all` runs all of them.
 - **Found by:** code review.
 - **Cause:** the gateway refuses `?token=...`, but uvicorn's access log printed
   the full URL of the refused request, key included.
-- **Fix:** the access log is off on the public port. See "Still open": until
-  the audit log exists, requests are not recorded anywhere.
+- **Fix:** the access log is off on the public port. The audit log records
+  tool calls and refused logins instead, never the token.
 
 ### 7. Wrong claim about forwarded headers
 - **Found by:** code review.
@@ -113,17 +113,83 @@ tests caught all six:
 
 ## Still open
 
-- **No audit log yet.** With the access log off (item 6), nothing records who
-  called which tool. Next phase.
-- **No rate limit at the gateway.** A caller can try tokens as fast as the
-  backend's resolve route answers. Next phase, with a failed-login backoff.
+- **Team, key and store changes have no hash chain.** `admin_events` is
+  append-only by trigger, but nothing like the gateway's chain shows whether
+  the owner switched the trigger off and edited a row. Sign-ins and password
+  changes are not recorded at all.
+- **Registry changes now need the gateway.** If the gateway or its log database
+  is down, an admin cannot add, edit, disable or remove an upstream (503). That
+  is on purpose, but it also means an upstream cannot be switched off then.
+- **An admin event can be wrong in one narrow case.** The event is stored before
+  the commit. If the commit fails, a second `failed` event corrects it. If the
+  backend process dies in between, there is no correction; the only sign is
+  that no `registry` event follows.
+- **The gateway's registry watch has blind spots.** It does not see name-only
+  edits, cannot tell disabled from deleted, merges edits made within one
+  refresh, misses changes made while it was not running, and writes one row per
+  replica. See "Future expansion" in `TIMELINE.md`.
+- **The audit chain does not show rows cut off its end.** Only comparing with
+  the copy in the container logs does, and nothing ships those logs anywhere yet.
+- **One call can go unrecorded.** If the log database dies while a call is in
+  flight, that call is only in the container log (`NOT STORED`). Calls after it
+  are refused until the database is back.
+- **The block on refused logins is by address.** Behind a proxy without
+  `FORWARDED_ALLOW_IPS`, all clients share one address, so one bad client gets
+  everyone a 429 for a minute.
+- **The refused-login counter is still a fixed minute.** A burst across the
+  boundary can reach twice the limit. The per-user call limit is a token
+  bucket now; with a full bucket a user can make 120 calls at once and then 2
+  a second, so up to about 240 in the first minute and 120 a minute after that.
 - **The 401 points to an OAuth server that does not exist.** The SDK adds the
   challenge header and metadata; OAuth for members is deferred.
 - **Not tested:** several gateway replicas at once; Postgres going down while
-  the gateway runs; the frontend (no tests, and the multi-store pages were not
-  checked in a browser).
+  the gateway runs; the frontend has no automated tests (the Audit page was
+  checked by hand in a headless browser, the multi-store pages were not).
 - **The end-to-end tests are not clean.** Each run leaves two members and two
   stores in the dev database, and with `SMTP_PASSWORD` set it sends 11 real
   emails to made-up `@example.com` addresses.
 - **Every request asks the backend who the caller is.** Nothing is cached, so
   revocation is instant, but a backend outage refuses every MCP request.
+
+## Audit log phase (11 Oct 2026)
+
+Two test failures while adding the audit log, neither a bug in the gateway:
+
+- **A new check looked for two fields in the wrong order.** The stored `detail`
+  JSON has sorted keys; the check expected `token_type` before `args_hash`.
+- **An existing check was a race that had been passing by luck.** With the hung
+  mock registered, a registry reload takes 5 seconds, and a change that lands
+  behind a running reload shows up after about 10. The test waited exactly 10.
+  It now waits up to 20.
+
+Last run after this phase: 96 gateway unit tests passed; the gateway end-to-end
+test passed with 37 checks. The backend tests were not re-run (no backend change).
+
+After adding the audit read and write routes and the per-user call limit:
+`./run_tests.sh all` passed. 95 backend and 117 gateway unit tests, the smoke
+test, and the gateway end-to-end test with 40 checks. No test failed on the way.
+
+After the `failed` correction for admin events and the gateway's registry watch:
+`./run_tests.sh all` passed. 99 backend and 121 gateway unit tests, the smoke
+test, and the gateway end-to-end test with 42 checks. No test failed on the way.
+
+After the Audit page, `admin_events`, the chain check and the token bucket:
+`./run_tests.sh all` passed. 101 backend and 129 gateway unit tests, the smoke
+test, and the gateway end-to-end test with 43 checks. One unit test failed on
+the way, as expected: it lists the private port's routes and a route was added.
+The Audit page was opened in headless Chrome at 1440 and 390 pixels wide, with
+no console errors. That is where the level filter was found sitting alone on
+its own row; it was moved beside the view's description.
+
+After moving the session to a cookie and calling the rate-limit script by id:
+`./run_tests.sh all` passed. 126 backend and 130 gateway unit tests, the smoke
+test, and the gateway end-to-end test with 43 checks. No test failed on the way.
+The session was also checked in headless Chrome through the real sign-in form:
+the cookie is HttpOnly and SameSite=Strict, no script on the page can see the
+token, a reload stays signed in, and sign out removes the cookie.
+
+After making sign out revoke the session and adding `GET /auth/session`:
+`./run_tests.sh all` passed. 131 backend and 130 gateway unit tests, the smoke
+test, and the gateway end-to-end test with 43 checks. No test failed on the way.
+In headless Chrome a signed-out page load now causes no 401 and prints nothing
+in the console, and the token that was in the cookie is refused after sign out.

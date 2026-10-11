@@ -10,6 +10,7 @@ applied when listing and again when calling, because a client can call a
 name it was never shown.
 """
 import logging
+import time
 from typing import Any
 
 from mcp import types
@@ -17,7 +18,9 @@ from mcp.server import ServerRequestContext
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 
+from app import limits
 from app import upstream as upstream_client
+from app.audit import ERROR, INFO, WARNING, audit, describe_call
 from app.catalog import catalog
 from app.config import settings
 from app.registry import Upstream
@@ -25,6 +28,7 @@ from app.registry import Upstream
 log = logging.getLogger(__name__)
 
 SEPARATOR = "__"
+_SEVERITY = {"ok": INFO, "error": WARNING, "denied": WARNING, "timeout": ERROR, "unreachable": ERROR}
 
 
 def exposed_name(slug: str, tool: str) -> str:
@@ -65,17 +69,49 @@ async def list_tools(ctx: ServerRequestContext[Any], params: types.PaginatedRequ
     )
 
 
-async def call_tool(ctx: ServerRequestContext[Any], params: types.CallToolRequestParams) -> types.CallToolResult:
-    caller = _caller()
+async def _route(caller: AccessToken, params: types.CallToolRequestParams) -> tuple[str, types.CallToolResult]:
+    """Does the call. Returns how it ended (a key of _SEVERITY) and what the caller gets."""
     parts = split_name(params.name)
     upstream = catalog.snapshot.upstreams.get(parts[0]) if parts else None
     if parts is None or upstream is None or not may_use(upstream, caller.claims["store_ids"]):
         # One answer for "no such tool" and "not yours", so a caller cannot map other stores' servers.
-        return _error(f"Unknown tool: {params.name}")
+        return "denied", _error(f"Unknown tool: {params.name}")
     try:
-        return await upstream_client.call_tool(upstream, parts[1], params.arguments or {})
+        result = await upstream_client.call_tool(upstream, parts[1], params.arguments or {})
     except TimeoutError:
-        return _error(f"{upstream.slug} did not answer within {settings.call_timeout_seconds:g} seconds")
+        return "timeout", _error(f"{upstream.slug} did not answer within {settings.call_timeout_seconds:g} seconds")
     except Exception as exc:  # connection refused, bad response, upstream crash: all "unreachable" to the caller
         log.warning("call to %s failed: %s", params.name, type(exc).__name__)
-        return _error(f"{upstream.slug} is unreachable")
+        return "unreachable", _error(f"{upstream.slug} is unreachable")
+    return ("error" if result.is_error else "ok"), result
+
+
+async def call_tool(ctx: ServerRequestContext[Any], params: types.CallToolRequestParams) -> types.CallToolResult:
+    caller = _caller()
+    if not await limits.take(f"ratelimit:gateway:calls:{caller.subject}", settings.calls_per_minute):
+        if await limits.once(f"ratelimit:gateway:calls-noted:{caller.subject}"):  # one row a minute, not one per refused call
+            await audit.record(
+                WARNING, "tool_call", "call", "rate_limited",
+                user_id=caller.subject, token_type=caller.claims["token_type"], limit=settings.calls_per_minute,
+            )
+        return _error(f"Rate limit: at most {settings.calls_per_minute} tool calls a minute. Try again in a moment.")
+    if not await audit.usable():
+        return _error("The audit log is unavailable, so no tool can be called right now")
+    started = time.monotonic()
+    outcome, result = await _route(caller, params)
+    slug, _, tool = params.name.partition(SEPARATOR)
+    # The caller gets one answer for every refusal; the log tells them apart: a server that exists is named here.
+    known = slug in catalog.snapshot.upstreams
+    await audit.record(
+        _SEVERITY[outcome],
+        "tool_call",
+        "call",
+        outcome,
+        user_id=caller.subject,
+        upstream=slug if known else None,
+        tool=(tool if known else params.name)[:200],
+        duration_ms=round((time.monotonic() - started) * 1000),
+        token_type=caller.claims["token_type"],
+        **describe_call(params.arguments or {}, outcome, getattr(result.content[0], "text", None) if result.content else None),
+    )
+    return result

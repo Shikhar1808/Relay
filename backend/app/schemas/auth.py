@@ -62,6 +62,10 @@ class UserOut(BaseModel):
     created_at: datetime
 
 
+class SessionOut(BaseModel):
+    user: UserOut | None  # None: nobody is signed in
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

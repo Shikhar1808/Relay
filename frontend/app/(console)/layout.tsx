@@ -28,6 +28,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     ...(isAdmin ? [{ href: "/team", label: "Team", icon: "team" } as const] : []),
     { href: "/chat", label: "Chat", icon: "chat" },
     { href: "/api-key", label: "API key", icon: "key" },
+    ...(isAdmin ? [{ href: "/audit", label: "Audit", icon: "audit" } as const] : []),
     { href: "/account", label: "Account", icon: "account" },
   ] as const;
   const scope = isAdmin

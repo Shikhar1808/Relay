@@ -15,12 +15,15 @@ from mcp import types
 from redis.asyncio import Redis
 
 from app import upstream as upstream_client
+from app.audit import ERROR, NOTICE, audit
 from app.config import settings
 from app.registry import Upstream, load_upstreams
 
 log = logging.getLogger(__name__)
 
 UPSTREAMS_CHANGED = "upstreams:changed"  # published by the backend's /upstream-servers routes
+# What the gateway can see change on a server, and what the audit log calls it. Never the credential itself.
+_WATCHED = {"id": "recreated", "url": "url", "headers": "credential", "store_id": "store"}
 
 
 @dataclass(frozen=True)
@@ -46,8 +49,31 @@ class Catalog:
 
         results = await asyncio.gather(*(probe(up) for up in upstreams.values()))
         tools = {slug: found for slug, found in zip(upstreams, results) if found is not None}
+        before, first_read = self.snapshot, not self.loaded
         self.snapshot = Snapshot(upstreams=upstreams, tools=tools)  # swapped in one step
         self.loaded = True
+
+        # The registry as this gateway sees it change, whatever the backend reported. An admin
+        # event with no change here did not take effect; a change here with no admin event was
+        # made in the database directly. Not on the first read: after a start everything looks new.
+        # shortcut: every replica records what it sees, so N replicas write N rows per change; dedupe in Redis if that gets noisy.
+        for slug in [] if first_read else sorted(before.upstreams.keys() | upstreams.keys()):
+            old, new = before.upstreams.get(slug), upstreams.get(slug)
+            if old is None or new is None:
+                # "removed" is all that can be said from here: disabled, deleted and undecryptable look the same.
+                await audit.record(NOTICE, "registry", "upstream.added" if old is None else "upstream.removed", "observed", upstream=slug)
+            elif old != new:
+                changed = [label for field, label in _WATCHED.items() if getattr(old, field) != getattr(new, field)]
+                await audit.record(NOTICE, "registry", "upstream.changed", "observed", upstream=slug, changed=changed)
+
+        # One audit event when an upstream goes down or comes back, not one per probe.
+        # A server seen for the first time is expected to answer, so only its failure is news.
+        for slug in upstreams:
+            answered = slug in tools
+            if answered != (slug in before.tools if slug in before.upstreams else True):
+                await audit.record(
+                    NOTICE if answered else ERROR, "upstream_health", "probe", "connected" if answered else "unreachable", upstream=slug
+                )
 
         # The dashboard reads these (through the backend) to show Connected / Unreachable.
         # They expire, so a stopped gateway does not leave stale "connected" marks.

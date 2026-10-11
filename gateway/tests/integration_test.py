@@ -7,7 +7,11 @@
 
 It registers upstreams through the backend's admin API, then talks to the
 gateway the way Claude Code or MCP Inspector would, with members' API keys.
-It removes the upstreams it created; the two members and two stores stay.
+It removes the upstreams it created; the two members and two stores stay, and
+so do the audit rows (the log is append-only). One step edits an audit row as
+the database owner to prove that verification notices, and puts it back.
+Another stops the gateway for a moment to prove that the registry cannot be
+changed while the audit log cannot record it.
 
 With SMTP_PASSWORD set, one run really sends 11 emails (2 invites and 9
 notices) to made-up @example.com addresses. It takes about two minutes: one
@@ -49,9 +53,35 @@ def _ok(label: str) -> None:
 
 def _compose(*args: str) -> None:
     done = subprocess.run(
-        ["docker", "compose", "--profile", "test", *args], cwd=REPO_ROOT, capture_output=True, text=True, timeout=60
+        ["docker", "compose", "--profile", "test", *args], cwd=REPO_ROOT, capture_output=True, text=True, timeout=180
     )
     assert done.returncode == 0, done.stderr
+
+
+def _logs(sql: str, user: str = '"$POSTGRES_USER"', ok: bool = True, db: str = "mcp_logs") -> str:
+    """Runs SQL in the audit log database (or `db`); `ok=False` expects the database to refuse it."""
+    done = subprocess.run(
+        ["docker", "compose", "exec", "-T", "postgres", "sh", "-c", f'psql -U {user} -d {db} -At -v ON_ERROR_STOP=1 -c "{sql}"'],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=20,
+    )
+    assert (done.returncode == 0) == ok, (sql, done.stdout, done.stderr)
+    return (done.stdout + done.stderr).strip()
+
+
+def _verify_audit() -> tuple[int, str]:
+    done = subprocess.run(
+        ["docker", "compose", "exec", "-T", "gateway", "python", "-m", "app.audit"],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+    )
+    return done.returncode, done.stdout + done.stderr
+
+
+def _forget_limits() -> None:
+    subprocess.run(
+        ["docker", "compose", "exec", "-T", "redis", "sh", "-c",
+         'redis-cli --scan --pattern "ratelimit:gateway:*" | xargs -r redis-cli del'],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=20,
+    )
 
 
 def _redis_get(key: str) -> str:
@@ -83,8 +113,8 @@ async def _tool_names(token: str) -> list[str]:
         return sorted(tool.name for tool in (await client.list_tools()).tools)
 
 
-async def _wait_for_tools(token: str, wanted: set[str], gone: set[str] = frozenset(), seconds: float = 10) -> list[str]:
-    """The gateway reloads on the backend's Redis message; give it a few seconds."""
+async def _wait_for_tools(token: str, wanted: set[str], gone: set[str] = frozenset(), seconds: float = 20) -> list[str]:
+    """The gateway reloads on the backend's Redis message. With the hung mock registered a reload takes 5 s, and a change can land behind one already running."""
     deadline = time.monotonic() + seconds
     while True:
         names = await _tool_names(token)
@@ -211,6 +241,77 @@ async def main() -> int:
             assert not result.is_error, result
             _ok("and the gateway keeps working afterwards")
 
+        print("-- the audit log")
+        mine = f"FROM audit_log WHERE user_id = '{alice_id}'"
+        got = _logs(f"SELECT severity || ' ' || outcome || ' ' || coalesce(upstream, '-') || ' ' || tool {mine} ORDER BY seq").splitlines()
+        assert got == [
+            f"INFO ok {shared} list_orders",
+            f"WARNING denied {beta} list_orders",
+            "WARNING denied - no-such-server__x",
+            f"ERROR unreachable {dead} list_orders",
+            f"ERROR timeout {shared} slow",
+            f"INFO ok {shared} list_orders",
+        ], got
+        _ok("every call alice made is there, in order, with a severity: ok, refused, unreachable, timed out")
+        assert _logs(f"SELECT count(*) {mine} AND (client_ip IS NULL OR duration_ms IS NULL OR detail NOT LIKE '%args_hash%api_key%')") == "0"
+        assert int(_logs(f"SELECT duration_ms {mine} AND outcome = 'timeout'")) >= 29000
+        _ok("each row has the caller's address, the duration, the token type and a hash of the arguments")
+        assert int(_logs("SELECT count(*) FROM audit_log WHERE category = 'auth' AND outcome = 'rejected' AND ts > now() - interval '10 minutes'")) >= 3
+        assert _logs(f"SELECT count(*) FROM audit_log WHERE audit_log::text LIKE '%{alice}%'") == "0"
+        _ok("the refused logins are recorded too, and the key sent in the URL is nowhere in the log")
+        assert _logs(f"SELECT severity FROM audit_log WHERE category = 'upstream_health' AND upstream = '{dead}'") == "ERROR"
+        _ok("an upstream that is down is one ERROR event, not one per health check")
+
+        r = await api.get("/audit-log", params={"category": "tool_call", "limit": 200}, headers=admin)
+        assert r.status_code == 200, r.text
+        seen = [event for event in r.json() if event["user_email"] == f"gw-alice-{unique}@example.com"]
+        assert len(seen) == 6 and seen[0]["seq"] > seen[-1]["seq"], r.text
+        assert seen[-1]["upstream"] == shared and seen[-1]["outcome"] == "ok" and seen[-1]["detail"]["token_type"] == "api_key", seen[-1]
+        r = await api.get("/audit-log", params={"category": "admin", "limit": 200}, headers=admin)
+        assert r.status_code == 200 and "mock-secret" not in r.text, r.text
+        added = {event["upstream"]: event for event in r.json() if event["action"] == "upstream.create"}
+        assert added[shared]["detail"]["changes"]["credential"] == "set" and added[alpha]["detail"]["changes"]["store_id"] == store_a, added
+        assert added[shared]["user_email"] == _env("ADMIN_EMAIL").lower() and added[shared]["severity"] == "NOTICE", added[shared]
+        _ok("the admin reads the log through the backend, with each user's email; registry changes are in it, without the credential")
+
+        seq = _logs(f"SELECT seq {mine} AND outcome = 'denied' ORDER BY seq LIMIT 1")
+        for statement in (f"UPDATE audit_log SET outcome = 'ok' WHERE seq = {seq}", f"DELETE FROM audit_log WHERE seq = {seq}", "TRUNCATE audit_log"):
+            assert "permission denied" in _logs(statement, user="gateway", ok=False)
+            assert "append-only" in _logs(statement, ok=False)
+        _ok("rows cannot be changed, deleted or truncated: not by the gateway's role, not by the database owner")
+
+        code, output = _verify_audit()
+        assert code == 0 and "chain intact" in output, output
+        tamper = f"ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_change; UPDATE audit_log SET outcome = '%s' WHERE seq = {seq}; ALTER TABLE audit_log ENABLE TRIGGER audit_log_no_change"
+        try:
+            _logs(tamper % "ok")  # what an attacker with owner rights could do: switch the rule off and hide a refusal
+            code, output = _verify_audit()
+            assert code == 1 and f"BROKEN at seq {seq}" in output, output
+            r = await api.get("/audit-log/verify", headers=admin)
+            assert r.status_code == 200 and r.json()["intact"] is False and r.json()["broken_seq"] == int(seq), r.text
+        finally:
+            _logs(tamper % "denied")
+        code, output = _verify_audit()
+        assert code == 0, output
+        r = await api.get("/audit-log/verify", headers=admin)
+        assert r.status_code == 200 and r.json()["intact"] is True and r.json()["broken_seq"] is None, r.text
+        _ok("a row edited behind the rule's back is found, at the right row, by `python -m app.audit` and by the dashboard's check")
+
+        print("-- too many refused logins")
+        statuses = []
+        while len(statuses) < 30 and (not statuses or statuses[-1] != 429):
+            r = await raw.post(f"{GATEWAY}/mcp", json=body, headers={**headers, "authorization": "Bearer umk_a-guess"})
+            statuses.append(r.status_code)
+        assert statuses[-1] == 429 and set(statuses[:-1]) == {401} and len(statuses) <= 21, statuses
+        r = await raw.post(f"{GATEWAY}/mcp", json=body, headers={**headers, "authorization": f"Bearer {alice}"})
+        assert r.status_code == 429 and r.headers.get("retry-after") == "60", (r.status_code, r.headers)
+        assert int(_logs("SELECT count(*) FROM audit_log WHERE category = 'auth' AND severity = 'WARNING' AND ts > now() - interval '1 minute'")) >= 1
+        _ok(f"after {len(statuses) - 1} refused logins the address gets 429 before its token is looked at, and the log has a WARNING")
+        _forget_limits()
+        r = await raw.post(f"{GATEWAY}/mcp", json=body, headers={**headers, "authorization": f"Bearer {alice}"})
+        assert r.status_code == 200, r.text
+        _ok("and is let in again once the block is over")
+
         print("-- several stores, and the admin")
         r = await api.post(f"/stores/{store_a}/members", json={"user_id": bob_id}, headers=admin)
         assert r.status_code == 201, r.text
@@ -247,6 +348,27 @@ async def main() -> int:
         assert elapsed < 15, f"30 concurrent calls took {elapsed:.1f}s"
         _ok(f"30 concurrent calls all succeed ({elapsed:.1f}s)")
 
+        _forget_limits()
+        async with Session(alice) as client:
+            started = time.monotonic()
+            results = await asyncio.gather(*(client.call_tool(f"{shared}__list_orders", {}) for _ in range(160)))
+            elapsed = time.monotonic() - started
+            refused = [result for result in results if result.is_error]
+            passed = len(results) - len(refused)
+            # CALLS_PER_MINUTE is 120: a full bucket, plus the 2 a second that came back while the burst ran.
+            assert 120 <= passed <= 120 + 2 * elapsed + 2 and refused, (passed, elapsed)
+            assert all("Rate limit" in result.content[0].text for result in refused), refused[:1]
+            assert _logs(f"SELECT severity || ' ' || count(*) {mine} AND outcome = 'rate_limited' GROUP BY severity") == "WARNING 1"
+            await asyncio.sleep(1.5)
+            result = await client.call_tool(f"{shared}__list_orders", {})
+            assert not result.is_error, result
+        async with Session(bob) as client:
+            result = await client.call_tool(f"{shared}__list_orders", {})
+            assert not result.is_error, result
+        _ok(f"a burst of 160 calls: {passed} pass (a bucket of 120, plus what refilled in {elapsed:.1f}s), the rest are refused and recorded once")
+        _ok("a moment later the same user can call again, and another user was never affected")
+        _forget_limits()
+
         print("-- control: changes take effect without restarting anything")
         r = await api.patch(f"/upstream-servers/{alpha_row['id']}", json={"enabled": False}, headers=admin)
         assert r.status_code == 200, r.text
@@ -279,6 +401,13 @@ async def main() -> int:
         await _wait_for_tools(alice, {f"{shared}__list_orders"}, gone={f"{gamma}__list_orders"})
         _ok("removing an upstream removes its tools")
 
+        def watched(slug: str) -> list[str]:
+            return _logs(f"SELECT action || coalesce(' ' || detail, '') FROM audit_log WHERE category = 'registry' AND upstream = '{slug}' ORDER BY seq").splitlines()
+
+        assert watched(alpha) == ["upstream.added", "upstream.removed"], watched(alpha)
+        assert watched(wrong) == ["upstream.added", 'upstream.changed {"changed": ["credential"]}'], watched(wrong)
+        _ok("the gateway records the registry changes it sees itself: added, no longer served, credential changed")
+
         print("-- an upstream dies and comes back (nothing tells the gateway; it notices on its own)")
         victim = f"victim-{unique}"
         victim_row = await upstream(victim, url="http://mock-b:9000/mcp")
@@ -297,6 +426,34 @@ async def main() -> int:
         await _wait_for_tools(alice, {f"{victim}__list_orders"}, seconds=50)
         assert _redis_get(f"upstream:{victim_row['id']}:status") == "connected"
         _ok("once it is back, its tools and its connected status return by themselves")
+        health = _logs(f"SELECT severity || ' ' || outcome FROM audit_log WHERE category = 'upstream_health' AND upstream = '{victim}' ORDER BY seq")
+        assert health.splitlines() == ["ERROR unreachable", "NOTICE connected"], health
+        _ok("and the audit log has both moments")
+
+        print("-- a change made in the database, behind the API's back (nothing tells the gateway)")
+        _logs(f"UPDATE upstream_servers SET url = '{MOCK}' WHERE id = '{victim_row['id']}'", db='\"$POSTGRES_DB\"')
+        deadline = time.monotonic() + 50
+        while not (seen := [line for line in watched(victim) if line.startswith("upstream.changed")]) and time.monotonic() < deadline:
+            await asyncio.sleep(1)
+        assert seen == ['upstream.changed {"changed": ["url"]}'], watched(victim)
+        assert _logs(f"SELECT count(*) FROM audit_log WHERE category = 'admin' AND action = 'upstream.update' AND upstream = '{victim}'") == "0"
+        _ok("is noticed within one refresh: the log has the changed URL, and no admin event that explains it")
+
+        print("-- the registry cannot change while the audit log cannot record it")
+        unrecorded = f"unrecorded-{unique}"
+        _compose("stop", "gateway")
+        try:
+            r = await api.post("/upstream-servers", json={"name": unrecorded, "slug": unrecorded, "url": MOCK}, headers=admin)
+            assert r.status_code == 503 and "audit log" in r.text, (r.status_code, r.text)
+            r = await api.patch(f"/upstream-servers/{victim_row['id']}", json={"enabled": False}, headers=admin)
+            assert r.status_code == 503, r.text
+        finally:
+            _compose("up", "-d", "--wait", "gateway")
+        r = await api.get("/upstream-servers", headers=admin)
+        rows = {row["slug"]: row for row in r.json()}
+        assert unrecorded not in rows and rows[victim]["enabled"] is True, r.text
+        _ok("with the gateway stopped, adding or disabling a server is refused with 503, and nothing was changed")
+        await _wait_for_tools(alice, {f"{shared}__list_orders"}, seconds=60)
 
         print("-- access is cut off at once")
         r = await api.get(f"/team/members/{alice_id}/api-keys", headers=admin)
@@ -315,8 +472,14 @@ async def main() -> int:
         r = await raw.post(f"{GATEWAY}/mcp", json=body, headers={**headers, "authorization": f"Bearer {bob}"})
         assert r.status_code == 401, r.text
         _ok("deactivating bob rejects his next call, though his key was never revoked")
+
+        code, output = _verify_audit()
+        assert code == 0 and "chain intact" in output, output
+        _ok("after all of this, 30 calls at once included, the audit chain still verifies")
     finally:
+        _forget_limits()
         _compose("start", "mock-b")
+        _compose("up", "-d", "--wait", "gateway")  # the clean-up below is recorded in its audit log
         if admin_key_id:
             await api.post(f"/team/me/api-keys/{admin_key_id}/revoke", headers=admin)
         for upstream_id in created:

@@ -62,3 +62,14 @@ def test_admin_email_is_lowercased_like_every_login_email():
 def test_admin_password_must_be_one_the_login_form_accepts(password):
     with pytest.raises(ValidationError, match="ADMIN_PASSWORD"):
         make(admin_password=password)
+
+
+def test_only_the_frontend_may_call_the_api_with_the_session_cookie_by_default():
+    assert make().allowed_origins == ["http://localhost:3000"]
+    assert make(app_base_url="https://app.example.com/").allowed_origins == ["https://app.example.com"]
+    assert make(cors_origins=["https://a.example", "https://b.example"]).allowed_origins == ["https://a.example", "https://b.example"]
+
+
+def test_a_wildcard_origin_is_refused_because_sessions_are_cookies():
+    with pytest.raises(ValidationError, match="CORS_ORIGINS"):
+        make(cors_origins=["*"])

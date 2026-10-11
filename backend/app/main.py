@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, chat, internal, stores, team, upstreams
+from app.api.routes import audit, auth, chat, internal, stores, team, upstreams
 from app.core.config import settings
 from app.services.bootstrap import bootstrap_admin
 
@@ -21,7 +21,8 @@ app = FastAPI(title="Urumi Platform API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=True,  # the dashboard's session is a cookie (app/core/deps.py: session_token)
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -30,6 +31,7 @@ app.include_router(auth.router)
 app.include_router(team.router)
 app.include_router(stores.router)
 app.include_router(upstreams.router)
+app.include_router(audit.router)
 app.include_router(chat.router)
 app.include_router(internal.router)
 

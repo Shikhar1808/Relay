@@ -1,5 +1,6 @@
 """Assert-based end-to-end smoke test against a LIVE stack (real Postgres +
-Redis, no mocks). Run this after `docker compose up -d` from the repo root:
+Redis, no mocks; the gateway must be up too, because registry changes are
+recorded in its audit log). Run this after `docker compose up -d` from the repo root:
 
     python backend/scripts/smoke_test.py
 
@@ -21,6 +22,7 @@ ceiling — a new step that emails must replace one, not add to them.
 Each step prints PASS/FAIL and the script exits
 non-zero on the first failure.
 """
+import http.cookiejar
 import os
 import re
 import subprocess
@@ -76,14 +78,23 @@ def _expire_auth_tokens(repo_root: Path, user_id: str) -> None:
     assert "UPDATE 1" in done.stdout, (done.stdout, done.stderr)
 
 
-def _psql(repo_root: Path, sql: str) -> str:
-    """Runs one read-only query in the compose Postgres and returns the bare value."""
+def _psql(repo_root: Path, sql: str, ok: bool = True) -> str:
+    """Runs one statement in the compose Postgres and returns its output; `ok=False` expects it to be refused."""
     done = subprocess.run(
         ["docker", "compose", "exec", "-T", "postgres", "sh", "-c", f'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "{sql}"'],
         cwd=repo_root, capture_output=True, text=True, timeout=20,
     )
-    assert done.returncode == 0, (done.stdout, done.stderr)
-    return done.stdout
+    assert (done.returncode == 0) == ok, (sql, done.stdout, done.stderr)
+    return done.stdout + ("" if ok else done.stderr)
+
+
+def _redis(repo_root: Path, *command: str) -> str:
+    done = subprocess.run(
+        ["docker", "compose", "exec", "-T", "redis", "redis-cli", *command],
+        cwd=repo_root, capture_output=True, text=True, timeout=20,
+    )
+    assert done.returncode == 0, (command, done.stderr)
+    return done.stdout.strip()
 
 
 def _step(label: str) -> None:
@@ -104,7 +115,12 @@ def main() -> int:
     assert service_token, "INTERNAL_SERVICE_TOKEN not found in env or repo-root .env"
     service_headers = {"Authorization": f"Bearer {service_token}"}
 
-    client = httpx.Client(base_url=BASE_URL, timeout=10)
+    app_origin = os.environ.get("APP_BASE_URL", env.get("APP_BASE_URL", "http://localhost:3000")).rstrip("/")
+
+    # Like a script, not a browser: this client keeps no cookies, so every request below is
+    # signed in only by the header it is given. The session cookie has its own step.
+    no_cookies = http.cookiejar.CookieJar(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+    client = httpx.Client(base_url=BASE_URL, timeout=10, cookies=no_cookies)
     unique = uuid.uuid4().hex[:8]
 
     _step("health check")
@@ -125,6 +141,7 @@ def main() -> int:
     assert r.status_code == 200, r.text
     admin_token = r.json()["access_token"]
     admin_id = r.json()["user"]["id"]
+    session_cookie, set_cookie = r.cookies["urumi_session"], r.headers["set-cookie"].lower()
     assert r.json()["user"]["role"] == "admin"
     _ok("admin login returns a token with role=admin")
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
@@ -132,6 +149,37 @@ def main() -> int:
     r = client.get("/auth/me", headers=admin_headers)
     assert r.status_code == 200 and r.json()["role"] == "admin", r.text
     _ok("GET /auth/me confirms admin identity")
+
+    _step("the dashboard's session is a cookie that page scripts cannot read")
+    assert "httponly" in set_cookie and "samesite=strict" in set_cookie and "max-age=" in set_cookie, set_cookie
+    _ok("sign in sets the session as an HttpOnly, SameSite=Strict cookie")
+    browser = httpx.Client(base_url=BASE_URL, timeout=10, cookies={"urumi_session": session_cookie})
+    r = browser.get("/auth/me")
+    assert r.status_code == 200 and r.json()["id"] == admin_id, r.text
+    r = httpx.get(f"{BASE_URL}/auth/me")
+    assert r.status_code == 401, r.text
+    _ok("the cookie alone signs a request in; with neither cookie nor header the answer is 401")
+    r = browser.get("/auth/session")
+    assert r.status_code == 200 and r.json()["user"]["id"] == admin_id, r.text
+    r = httpx.get(f"{BASE_URL}/auth/session")
+    assert r.status_code == 200 and r.json() == {"user": None}, r.text
+    _ok("a page can ask who is signed in and gets a plain answer either way, never an error")
+    # A change that is refused by 404 (no such key) reached the route; one refused by 403 did not.
+    harmless_change = f"/team/me/api-keys/{uuid.uuid4()}/revoke"
+    for foreign in ("http://evil.example", "null"):
+        r = browser.post(harmless_change, headers={"Origin": foreign})
+        assert r.status_code == 403 and "dashboard" in r.text, (foreign, r.text)
+    r = browser.post(harmless_change, headers={"Origin": app_origin})
+    assert r.status_code == 404, r.text
+    r = browser.get("/auth/me", headers={"Origin": "http://evil.example"})
+    assert r.status_code == 200 and "access-control-allow-origin" not in r.headers, r.headers
+    _ok("a change sent with the cookie from another site's page is refused; another site's read gets no permission to see the answer")
+    preflight = {"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"}
+    r = client.options("/stores", headers={"Origin": app_origin, **preflight})
+    assert r.headers.get("access-control-allow-origin") == app_origin and r.headers.get("access-control-allow-credentials") == "true", r.headers
+    r = client.options("/stores", headers={"Origin": "http://evil.example", **preflight})
+    assert "access-control-allow-origin" not in r.headers, r.headers
+    _ok("only the frontend's own address may call the API from a browser with the session")
 
     _step("single-admin enforcement")
     r = client.post(
@@ -371,6 +419,59 @@ def main() -> int:
     assert r.status_code == 404, r.text
     _ok("an upstream can be removed, once")
 
+    _step("registry changes are in the gateway's audit log, which only the admin can read")
+    r = client.get("/audit-log", headers=member_headers)
+    assert r.status_code == 403, r.text
+    r = client.get("/audit-log")
+    assert r.status_code == 401, r.text
+    _ok("a member cannot read the audit log (403), and a caller with no token is not signed in (401)")
+    r = client.get("/audit-log", params={"category": "admin", "limit": 200}, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    mine = [event for event in reversed(r.json()) if event["upstream"] == slug]
+    assert [event["action"] for event in mine] == ["upstream.create"] + ["upstream.update"] * 4 + ["upstream.delete"], mine
+    for event in mine:
+        assert event["user_id"] == admin_id and event["user_email"] == admin_email.lower(), event
+        assert event["severity"] == "NOTICE" and event["category"] == "admin" and event["client_ip"], event
+    assert mine[0]["detail"]["changes"]["credential"] == "set", mine[0]
+    assert mine[4]["detail"]["changes"] == {"credential": "none", "store_id": None}, mine[4]
+    assert "smoke-secret" not in r.text, "a credential reached the audit log"
+    _ok("every change that was made is there, in order, with who made it; the refused ones and the credential are not")
+    r = client.get("/audit-log", params={"limit": 2}, headers=admin_headers)
+    seqs = [event["seq"] for event in r.json()]
+    assert r.status_code == 200 and len(seqs) == 2 and seqs[0] > seqs[1], r.text
+    r = client.get("/audit-log", params={"limit": 2, "before": seqs[-1]}, headers=admin_headers)
+    assert r.status_code == 200 and all(event["seq"] < seqs[-1] for event in r.json()), r.text
+    for bad in ({"limit": 0}, {"limit": 201}, {"before": "x"}, {"category": "a;b"}):
+        assert client.get("/audit-log", params=bad, headers=admin_headers).status_code == 422, bad
+    _ok("the log is paged newest first, and bad paging or filter values are rejected")
+    r = client.get("/audit-log/verify", headers=member_headers)
+    assert r.status_code == 403, r.text
+    r = client.get("/audit-log/verify", headers=admin_headers)
+    assert r.status_code == 200 and r.json()["intact"] is True and r.json()["verified"] >= 6, r.text
+    _ok("the admin can ask whether the gateway's log is untouched; a member cannot")
+
+    _step("team, key and store changes are in the platform's own audit log")
+    r = client.get("/audit-log/platform", headers=member_headers)
+    assert r.status_code == 403, r.text
+    r = client.get("/audit-log/platform", params={"limit": 200}, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    events = list(reversed(r.json()))
+    about_member = [(event["action"], event["user_email"]) for event in events if event["target"] == member_email]
+    admin_did, member_did = admin_email.lower(), member_email
+    assert about_member[:5] == [
+        ("member.create", admin_did), ("api_key.issue", admin_did), ("api_key.revoke", admin_did),
+        ("store.member_add", admin_did), ("api_key.issue", member_did),
+    ], about_member
+    assert ("api_key.revoke", member_did) in about_member and ("store.member_remove", admin_did) in about_member, about_member
+    assert [event["action"] for event in events if event["target"] == store["slug"]] == ["store.create"], events
+    for event in events:
+        assert event["category"] == "platform" and event["severity"] == "NOTICE" and event["client_ip"], event
+    assert raw_key not in r.text and temp_password not in r.text, "a secret reached the audit log"
+    _ok("each change is there with who made it (the admin, or the member for their own key), and no key or password")
+    for refused in ("UPDATE admin_events SET action = 'x'", "DELETE FROM admin_events", "TRUNCATE admin_events"):
+        assert "append-only" in _psql(repo_root, refused, ok=False), refused
+    _ok("rows there cannot be changed, deleted or truncated, even by the database owner")
+
     _step("self-service revoke cannot target another user's key (IDOR check)")
     other_email = f"other-member-{unique}@example.com"
     r = client.post("/team/members", json={"email": other_email, "name": "Other Member"}, headers=admin_headers)
@@ -484,6 +585,29 @@ def main() -> int:
     r = client.get("/stores", headers=member_headers)
     assert r.status_code == 200, r.text  # a shared bucket would still be empty here
     _ok("an exhausted chat limit does not block the dashboard")
+
+    _step("sign out ends the session at once, and the chat tokens with it")
+    chat_hash = _psql(repo_root, f"SELECT token_hash FROM chat_tokens WHERE user_id = '{member_id}' AND NOT revoked").strip()
+    assert chat_hash and _redis(repo_root, "exists", f"chat_token:{chat_hash}") == "1", chat_hash
+    r = client.post("/auth/logout", headers=member_headers)
+    assert r.status_code == 204, r.text
+    r = client.get("/auth/me", headers=member_headers)
+    assert r.status_code == 401, r.text
+    _ok("a signed-out token is refused on its next use, although it has hours left")
+    assert _psql(repo_root, f"SELECT count(*) FROM chat_tokens WHERE user_id = '{member_id}' AND NOT revoked").strip() == "0"
+    assert _redis(repo_root, "exists", f"chat_token:{chat_hash}") == "0"
+    _ok("the member's chat token is revoked too, in the database and in the gateway's lookup cache")
+    r = browser.post("/auth/logout", headers={"Origin": app_origin})
+    assert r.status_code == 204 and 'urumi_session=""' in r.headers["set-cookie"] and "max-age=0" in r.headers["set-cookie"].lower(), r.headers
+    r = client.get("/auth/me", headers=admin_headers)  # the same token the cookie held
+    assert r.status_code == 401, r.text
+    r = httpx.get(f"{BASE_URL}/auth/session", cookies={"urumi_session": session_cookie})
+    assert r.status_code == 200 and r.json() == {"user": None}, r.text
+    browser.close()
+    _ok("signing out in the browser clears the cookie and kills the token inside it")
+    r = client.post("/auth/logout")
+    assert r.status_code == 204, r.text
+    _ok("signing out when nobody is signed in is not an error")
 
     _step("login rate limit (token bucket, capacity=5/min by IP)")
     saw_429 = False

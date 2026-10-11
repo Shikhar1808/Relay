@@ -168,3 +168,54 @@ async def test_run_refreshes_at_once_on_a_change_and_once_for_a_burst_of_changes
     await run_briefly(cat, FakeRedis(pubsub=FakePubSub(messages=5)), 0.1)
     # The first refresh at startup, then one more for all five queued change messages.
     assert world["loads"] == 2
+
+
+async def test_health_is_recorded_when_it_changes_not_on_every_probe(world, monkeypatch, audit_events):
+    cat, redis = Catalog(), FakeRedis()
+    await cat.refresh(POOL, redis)
+    await cat.refresh(POOL, redis)
+    assert [(e["severity"], e["category"], e["outcome"], e["upstream"]) for e in audit_events] == [
+        ("ERROR", "upstream_health", "unreachable", "dead")
+    ], "a server that is down on arrival is news once; servers that answer are not"
+
+    async def all_answer(upstream):
+        return [make_tool("list_orders")]
+
+    monkeypatch.setattr(catalog_module.upstream_client, "list_tools", all_answer)
+    await cat.refresh(POOL, redis)
+    assert (audit_events[-1]["severity"], audit_events[-1]["outcome"], audit_events[-1]["upstream"]) == ("NOTICE", "connected", "dead")
+    assert len(audit_events) == 2
+
+
+async def test_the_registry_is_watched_and_each_change_the_gateway_sees_is_recorded_once(world, audit_events):
+    def seen() -> list[tuple]:
+        return [(e["action"], e["upstream"], e.get("changed")) for e in audit_events if e["category"] == "registry"]
+
+    cat, redis = Catalog(), FakeRedis()
+    await cat.refresh(POOL, redis)
+    assert seen() == [], "after a start everything would look new: the first read is not news"
+
+    # A new dict each time, as load_upstreams gives: one server added, one gone, one edited.
+    world["upstreams"] = {
+        "woo": make_upstream("woo", "B", headers={"Authorization": "Bearer rotated-secret"}),
+        "dead": world["upstreams"]["dead"],
+        "new": make_upstream("new"),
+    }
+    await cat.refresh(POOL, redis)
+    await cat.refresh(POOL, redis)  # nothing changed since: nothing more to record
+    assert seen() == [
+        ("upstream.removed", "github", None),
+        ("upstream.added", "new", None),
+        ("upstream.changed", "woo", ["credential", "store"]),
+    ]
+    assert {(e["severity"], e["outcome"]) for e in audit_events if e["category"] == "registry"} == {("NOTICE", "observed")}
+    assert "rotated-secret" not in str(audit_events), "the log says the credential changed, never what it is"
+
+
+async def test_a_server_deleted_and_made_again_under_the_same_name_is_seen(world, audit_events):
+    cat, redis = Catalog(), FakeRedis()
+    await cat.refresh(POOL, redis)
+    again = make_upstream("github")
+    world["upstreams"] = {**world["upstreams"], "github": type(again)(id="another-id", slug="github", url=again.url, headers={}, store_id=None)}
+    await cat.refresh(POOL, redis)
+    assert [e["changed"] for e in audit_events if e["category"] == "registry"] == [["recreated"]]

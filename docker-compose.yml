@@ -35,6 +35,8 @@ services:
       GATEWAY_ENCRYPTION_KEY: ${GATEWAY_ENCRYPTION_KEY:?set GATEWAY_ENCRYPTION_KEY in .env}
       # What the gateway must present to /internal/*.
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN in .env}
+      # The gateway's private port: registry changes are recorded in its audit log, and the dashboard reads it.
+      GATEWAY_INTERNAL_URL: http://gateway:9090
       # Optional: set both to auto-create the admin on startup, or leave both
       # unset and use POST /auth/admin/signup instead (see IMPLEMENTATION.md).
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
@@ -56,7 +58,8 @@ services:
       - "8000:8000"
 
   # One-shot: gives the gateway a database role that can only read the
-  # upstream registry. Runs after the backend, whose migrations create the table.
+  # upstream registry, and creates the append-only audit log database (mcp_logs).
+  # Runs after the backend, whose migrations create the registry table.
   db-init:
     image: postgres:18-alpine
     environment:
@@ -77,6 +80,9 @@ services:
     build: ./gateway
     environment:
       PLATFORM_DATABASE_URL: postgresql://gateway:${GATEWAY_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-platform}
+      LOGS_DATABASE_URL: postgresql://gateway:${GATEWAY_DB_PASSWORD}@postgres:5432/mcp_logs
+      AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:?set AUDIT_HMAC_KEY in .env}
+      AUDIT_DETAIL: ${AUDIT_DETAIL:-standard}
       REDIS_URL: redis://redis:6379/0
       RESOLVE_URL: http://backend:8000/internal/auth/resolve
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
@@ -91,7 +97,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8080:8080"  # /mcp only; the health port (9090) is deliberately not published
+      - "8080:8080"  # /mcp only; the private port (9090: health, audit log for the backend) is deliberately not published
 
   # Fake upstream MCP servers for gateway/tests/integration_test.py:
   #   docker compose --profile test up -d

@@ -24,10 +24,17 @@ A FastAPI + PostgreSQL + Redis backend covering:
 - An internal token-resolve endpoint the MCP Gateway (`gateway/`) calls on
   every request, guarded by a shared service token
 - The registry of upstream MCP servers the gateway forwards to, with
-  credentials encrypted at rest
+  credentials encrypted at rest. Every change is recorded in the gateway's
+  audit log before it is committed, and refused (503) if it cannot be
+- `GET /audit-log` (admin only): the gateway's audit log for the dashboard,
+  newest first, with each user's email added; `GET /audit-log/verify` asks the
+  gateway whether that log is untouched
+- An append-only record of team, API key and store changes (`admin_events`),
+  written in the same transaction as each change and read through
+  `GET /audit-log/platform`
 - Token-bucket rate limiting on login, signup, and all authenticated routes
 
-Not built yet: the MCP Gateway itself, the WooCommerce MCP server, real
+Not built yet: the WooCommerce MCP server, real
 Kubernetes/Helm store provisioning, LiteLLM integration. The web console
 lives in `frontend/` (Next.js) and has its own README.
 Those are later phases — see the project plan doc.
@@ -203,7 +210,7 @@ most common mistake when reading the code, so here's the map:
 
 | Credential | Issued by | Used for | Lives in |
 |---|---|---|---|
-| Dashboard session JWT | `/auth/login` | Browser → this API (dashboard, team mgmt, chat) | `app/core/security.py: create_access_token` |
+| Dashboard session JWT | `/auth/login` | Browser → this API (dashboard, team mgmt, chat). The browser holds it as a cookie page scripts cannot read (`HttpOnly`, `SameSite=Strict`); scripts and tests send it as a `Bearer` header | `app/core/security.py: create_access_token`; `app/core/deps.py: session_token` |
 | Gateway API key (`umk_...`) | Admin (for a member) via `/team/members/{id}/api-keys`, or a member for themself via `/team/me/api-keys` | A member's MCP client (Claude Code, Cursor) → the future Gateway | `app/db/models/api_key.py: ApiKey` (hash only) |
 | Short chat token (`chat_...`) | This backend, automatically, on `/chat/message` | This backend → the future Gateway, on behalf of a chat session | `app/db/models/tokens.py: ChatToken` (hash only) + Redis |
 
@@ -233,15 +240,18 @@ backend/
         store.py             Store, StoreMember, StoreStatus
         tokens.py            AuthToken, TokenPurpose, ChatToken
         upstream.py          UpstreamServer (an MCP server the gateway forwards to)
+        admin_event.py       AdminEvent (who changed what in the team, keys and stores; append-only)
     schemas/             Pydantic request/response models, one file per route file
       auth.py              Login, signup, password schemas; the Password rule; UserOut
       team.py              Member and API key schemas
-      stores.py  chat.py  internal.py  upstreams.py
+      stores.py  chat.py  internal.py  upstreams.py  audit.py
     services/            Logic shared by more than one route
       bootstrap.py         Single-admin creation, shared by startup + signup route
       mailer.py            SMTP sender + plain-text email templates
       auth_tokens.py       Issue/redeem single-use invite and reset tokens
       stores.py            Store slug generation; stores_for_user (the scoping rule)
+      gateway_audit.py     Writes to and reads from the gateway's audit log (its private port)
+      admin_audit.py       Adds an admin_events row to the caller's transaction
     api/
       routes/
         auth.py            Login, admin signup, /auth/me, change/forgot/set password
@@ -249,11 +259,13 @@ backend/
         stores.py          Store create (stub) + member assignment
         chat.py            Demo chat agent + chat token minting
         upstreams.py       Upstream MCP server registry (admin only); tells the gateway on change
+        audit.py           GET /audit-log, /audit-log/platform, /audit-log/verify: the audit log, for the dashboard (admin only)
         internal.py        POST /internal/auth/resolve (service token required)
   scripts/
     smoke_test.py                       End-to-end check against a live stack
   tests/                                Unit tests: `uv run pytest` (settings, passwords and tokens,
-                                        encryption, input rules, the rate limiter)
+                                        encryption, input rules, the rate limiter, the audit log client,
+                                        recording admin events)
   migrations/                           Alembic: env.py + one file per schema change
   alembic.ini
   Dockerfile                            Runs `alembic upgrade head`, then uvicorn
@@ -265,12 +277,14 @@ backend/
 | Method | Path | Auth | Rate limit | What it does |
 |---|---|---|---|---|
 | GET | `/health` | none | none | Liveness/readiness probe target |
-| POST | `/auth/login` | none | IP, 5/min | Returns a dashboard JWT |
+| POST | `/auth/login` | none | IP, 5/min | Returns a dashboard JWT and sets it as the session cookie |
+| POST | `/auth/logout` | none | none | Signs out: removes the session cookie, revokes the token that was in it and the user's chat tokens. 204 even if nobody is signed in |
+| GET | `/auth/session` | none | none | `{"user": ...}` for whoever is signed in, `{"user": null}` if nobody is. Never 401, so a page can ask on every load |
 | POST | `/auth/admin/signup` | none | IP, 5/min | Creates the one admin; 409 if one already exists |
 | GET | `/auth/me` | JWT | user, 60/min | Current user identity |
 | POST | `/auth/change-password` | JWT | IP, 5/min | Changes own password; 400 if the current one is wrong |
 | POST | `/auth/forgot-password` | none | IP, 5/min | Emails a reset link; identical 202 whether or not the email exists |
-| POST | `/auth/set-password` | none | IP, 5/min | Redeems an invite/reset token, sets the password, returns a JWT; 400 if invalid, used, or expired |
+| POST | `/auth/set-password` | none | IP, 5/min | Redeems an invite/reset token, sets the password, returns a JWT and sets the session cookie; 400 if invalid, used, or expired |
 | POST | `/team/members` | JWT (admin) | user, 60/min | Creates a member, emails an invite link, returns a one-time temp password |
 | POST | `/team/members/{id}/resend-invite` | JWT (admin) | user, 60/min | Emails a fresh invite link; the old one stops working |
 | GET | `/team/members` | JWT (admin) | user, 60/min | Lists all users |
@@ -382,11 +396,16 @@ one" isn't exactly true. Upgrade this only if the demo needs it to be exact.
   step so two pods never migrate at the same moment.
 - **No refresh tokens.** The dashboard JWT is a flat 12-hour token. Add a
   refresh flow only if the demo needs longer-lived sessions.
-- **CORS is wide open** (`cors_origins: ["*"]` by default) for local dev
-  against the frontend on another port. Restrict this via the
-  `CORS_ORIGINS` env var before any real deployment. (`allow_credentials`
-  is deliberately NOT set — this API is Bearer-JWT only, no cookies, so
-  there's nothing for it to protect.)
+- **The browser session is a cookie, so who may call the API matters.** Only
+  the frontend's own address (`APP_BASE_URL`, or the list in `CORS_ORIGINS`)
+  may call the API from a browser with the session; `"*"` is refused at
+  startup. A change sent with the cookie must also name one of those addresses
+  in its `Origin` header, or it gets 403. The cookie is `SameSite=Strict`, so
+  the frontend and the API must be on the same site (one host, or subdomains
+  of one domain). Signing out removes the cookie and revokes the token that
+  was in it: its hash is kept in Redis until the token would have expired, and
+  every request checks that list. A request with no token and no cookie gets
+  401 (it used to be 403).
 - **`/internal/auth/resolve` trusts one shared secret.** Callers must send
   `INTERNAL_SERVICE_TOKEN` as a bearer token (compared in constant time), so
   reaching the backend is not enough to probe tokens. A NetworkPolicy should

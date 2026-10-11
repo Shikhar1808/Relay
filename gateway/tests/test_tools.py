@@ -194,3 +194,90 @@ async def test_handlers_refuse_to_run_without_a_caller(monkeypatch, upstream_cal
     with pytest.raises(PermissionError):
         await call("github__list_repos")
     assert upstream_calls == []
+
+
+# ---- the audit log ---------------------------------------------------------------
+
+
+async def test_a_successful_call_is_recorded_with_who_what_and_how_long(monkeypatch, upstream_calls, audit_events):
+    as_caller(monkeypatch, ["A"])
+    await call("store-a__list_orders", {"status": "processing", "api_key": "sk-123"})
+    (event,) = audit_events
+    assert (event["severity"], event["category"], event["outcome"]) == ("INFO", "tool_call", "ok")
+    assert (event["user_id"], event["upstream"], event["tool"], event["token_type"]) == ("user-1", "store-a", "list_orders", "api_key")
+    assert isinstance(event["duration_ms"], int) and len(event["args_hash"]) == 64
+    assert "sk-123" not in event["arguments"] and "processing" in event["arguments"]
+
+
+async def test_a_refused_call_is_a_warning_and_the_log_tells_the_two_refusals_apart(monkeypatch, upstream_calls, audit_events):
+    as_caller(monkeypatch, ["A"])
+    await call("store-b__list_orders")  # exists, but not the caller's
+    await call("nope__list_orders")  # does not exist
+    assert [(e["severity"], e["outcome"], e["upstream"], e["tool"]) for e in audit_events] == [
+        ("WARNING", "denied", "store-b", "list_orders"),
+        ("WARNING", "denied", None, "nope__list_orders"),
+    ]
+
+
+async def test_upstream_failures_are_errors_in_the_log(monkeypatch, audit_events):
+    as_caller(monkeypatch, [])
+
+    async def too_slow(upstream, name, arguments):
+        raise TimeoutError
+
+    async def tool_failed(upstream, name, arguments):
+        return types.CallToolResult(content=[types.TextContent(type="text", text="order 9 not found")], is_error=True)
+
+    monkeypatch.setattr(tools.upstream_client, "call_tool", too_slow)
+    await call("github__list_repos")
+    monkeypatch.setattr(tools.upstream_client, "call_tool", tool_failed)
+    await call("github__list_repos")
+    assert [(e["severity"], e["outcome"]) for e in audit_events] == [("ERROR", "timeout"), ("WARNING", "error")]
+    assert audit_events[1]["error"] == "order 9 not found"
+
+
+async def test_no_tool_runs_while_the_audit_log_cannot_be_written(monkeypatch, upstream_calls):
+    as_caller(monkeypatch, [])
+
+    async def unusable():
+        return False
+
+    monkeypatch.setattr(tools.audit, "usable", unusable)
+    result = await call("github__list_repos")
+    assert result.is_error and "audit log is unavailable" in text(result)
+    assert upstream_calls == [], "the upstream must not be called when the call cannot be recorded"
+
+
+async def test_listing_tools_is_not_recorded(monkeypatch, audit_events):
+    await names_for(monkeypatch, ["A"])
+    assert audit_events == []
+
+
+# ---- the per-user call limit -------------------------------------------------------
+
+
+async def test_a_user_over_the_call_limit_is_refused_and_it_is_recorded_once(monkeypatch, upstream_calls, audit_events):
+    monkeypatch.setattr(tools.settings, "calls_per_minute", 2)
+    as_caller(monkeypatch, [])
+    results = [await call("github__list_repos") for _ in range(5)]
+    assert [result.is_error for result in results] == [False, False, True, True, True]
+    assert "at most 2 tool calls a minute" in text(results[2])
+    assert len(upstream_calls) == 2, "a refused call must not reach the upstream"
+    limited = [event for event in audit_events if event["outcome"] == "rate_limited"]
+    assert len(limited) == 1, "one row a minute, not one per refused call"
+    assert (limited[0]["severity"], limited[0]["user_id"], limited[0]["limit"]) == ("WARNING", "user-1", 2)
+
+
+async def test_the_call_limit_is_per_user(monkeypatch, upstream_calls):
+    monkeypatch.setattr(tools.settings, "calls_per_minute", 1)
+    monkeypatch.setattr(tools, "get_access_token", lambda: make_caller([], subject="user-1"))
+    assert not (await call("github__list_repos")).is_error and (await call("github__list_repos")).is_error
+    monkeypatch.setattr(tools, "get_access_token", lambda: make_caller([], subject="user-2"))
+    assert not (await call("github__list_repos")).is_error
+
+
+async def test_without_redis_calls_are_not_limited(monkeypatch, upstream_calls, counters):
+    monkeypatch.setattr(tools.settings, "calls_per_minute", 1)
+    as_caller(monkeypatch, [])
+    counters.broken = True
+    assert not any([(await call("github__list_repos")).is_error for _ in range(3)])

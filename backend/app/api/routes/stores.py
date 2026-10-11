@@ -4,7 +4,7 @@ IMPLEMENTATION.md for what a real Create Store Service will do instead.
 """
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from app.db.models import Role, Store, StoreMember, StoreStatus, User
 from app.db.session import get_db
 from app.schemas.auth import UserOut
 from app.schemas.stores import AssignMemberRequest, CreateStoreRequest, StoreMemberOut, StoreOut
+from app.services.admin_audit import record
 from app.services.mailer import notice_email, send_email
 from app.services.stores import stores_for_user, unique_slug
 
@@ -27,6 +28,7 @@ router = APIRouter(
 @router.post("", response_model=StoreOut, status_code=status.HTTP_201_CREATED)
 async def create_store(
     body: CreateStoreRequest,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Store:
@@ -43,10 +45,11 @@ async def create_store(
             created_by=admin.id,
         )
         db.add(store)
+        record(db, request, admin, "store.create", slug, name=body.name)
         try:
             await db.commit()
         except IntegrityError:
-            await db.rollback()
+            await db.rollback()  # the record goes with it; the next attempt adds its own
             if attempt == 2:
                 raise HTTPException(status.HTTP_409_CONFLICT, "Could not allocate a unique store slug, try again")
             continue
@@ -67,6 +70,7 @@ async def assign_member(
     store_id: uuid.UUID,
     body: AssignMemberRequest,
     background: BackgroundTasks,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> StoreMember:
@@ -82,6 +86,7 @@ async def assign_member(
 
     assignment = StoreMember(store_id=store_id, user_id=body.user_id)
     db.add(assignment)
+    record(db, request, admin, "store.member_add", member.email, store=store.slug)
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -102,6 +107,7 @@ async def remove_member(
     store_id: uuid.UUID,
     user_id: uuid.UUID,
     background: BackgroundTasks,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -114,10 +120,14 @@ async def remove_member(
     assignment = result.scalar_one_or_none()
     if not assignment:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Member is not assigned to this store")
+    member, store = await db.get(User, user_id), await db.get(Store, store_id)
     await db.delete(assignment)
+    record(
+        db, request, admin, "store.member_remove",
+        member.email if member else str(user_id), store=store.slug if store else str(store_id),
+    )
     await db.commit()
 
-    member, store = await db.get(User, user_id), await db.get(Store, store_id)
     if member and store:
         background.add_task(
             send_email,

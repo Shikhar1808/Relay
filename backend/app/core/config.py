@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     gateway_encryption_key: str
     # Shared secret the gateway sends to /internal/* (app/api/routes/internal.py).
     internal_service_token: str
+    # The gateway's private port, where its audit log is written to and read
+    # (app/services/gateway_audit.py). The same service token is sent there.
+    gateway_internal_url: str = "http://gateway:9090"
 
     # Outbound email over SMTP (see app/services/mailer.py). Defaults are Resend's SMTP
     # relay with its shared test sender, which only delivers to the Resend
@@ -47,7 +50,10 @@ class Settings(BaseSettings):
     invite_token_ttl_hours: int = 72
     reset_token_ttl_minutes: int = 30
 
-    cors_origins: list[str] = ["*"]  # dev-only default; restrict before any real deployment
+    # Sites whose pages may call this API with the signed-in user's session cookie.
+    # Unset means the frontend's own address, APP_BASE_URL. Never "*": with a cookie
+    # session that would let any site the user visits act as them.
+    cors_origins: list[str] | None = None
 
     @field_validator("admin_email", "admin_password", "smtp_password", mode="before")
     @classmethod
@@ -90,6 +96,17 @@ class Settings(BaseSettings):
         # bootstrap admin gets created with a password nobody can ever submit.
         if value is not None and not (8 <= len(value) <= 20 and value.isascii() and value.isprintable()):
             raise ValueError("ADMIN_PASSWORD must be 8-20 printable ASCII characters (same rule as login)")
+        return value
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return self.cors_origins or [self.app_base_url.rstrip("/")]
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _no_wildcard_origin(cls, value: list[str] | None) -> list[str] | None:
+        if value and "*" in value:
+            raise ValueError('CORS_ORIGINS cannot contain "*": name the frontend\'s address instead')
         return value
 
 

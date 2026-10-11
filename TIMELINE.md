@@ -5,7 +5,7 @@ and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on 
 
 - **Deadline:** 26 Oct 2026
 - **Last updated:** 11 Oct 2026
-- **Now:** the gateway runs (`gateway/`) and passes its end-to-end test; next is its audit log (MCP logs database, append-only, hash chain)
+- **Now:** the audit log is done end to end (gateway log, team and store changes, the dashboard's Audit page with a tamper check); next is the WooCommerce MCP server
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -19,9 +19,10 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [x] Database migrations (Alembic)
 - [x] Auth endpoints: admin signup, login, issue and revoke API keys
 - [x] Table: `upstream_servers` with encrypted credentials (and an optional `store_id`)
+- [x] Table: `admin_events`, an append-only record of team, API key and store changes, written in the same transaction as the change
 - [x] Upstream server endpoints: list, add, edit, disable, remove (`/upstream-servers`)
 - [x] AES-256-GCM encrypt/decrypt helper, used when saving and loading upstream credentials
-- [ ] MCP logs database with `audit_log` table
+- [x] MCP logs database with `audit_log` table (`mcp_logs`, append-only by role and trigger, hash chain)
 - [x] **Checkpoint:** create a user, issue an API key, add an upstream server with encrypted credentials
 
 ## Oct 12–13: MCP gateway core
@@ -32,8 +33,8 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [x] Upstream registry: load enabled upstreams at startup and on change (every 30 s and on a Redis message)
 - [x] `tools/list` with concurrent fan-out, 5 s timeout per upstream, `slug__tool` names (fan-out runs in the background; requests read a snapshot)
 - [x] `tools/call` routing: strip prefix, find upstream, add credential, 30 s timeout, store check
-- [ ] Audit log entry on every tool call
-- [ ] **Checkpoint:** call a mock upstream through the gateway and see the audit entry
+- [x] Audit log entry on every tool call (also refused logins and upstreams going down or coming back; severity and detail levels)
+- [x] **Checkpoint:** call a mock upstream through the gateway and see the audit entry
 
 ## Oct 14: WooCommerce MCP server
 
@@ -48,9 +49,10 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [x] Short chat token issued and stored in Redis and the database (inside `POST /chat/message`)
 - [ ] `/chat/message` calls the LLM with the gateway's tools (currently a stub reply)
 - [ ] Streaming replies, and showing which tools were called
+- [ ] Chat page layout after `refernces/chatBotDesign.png`: the chat agent on the left, and on the right a panel that shows what the agent changed and its output (tool calls and their results), laid out to read well. Not started: today's agent is a stub with no output to show
 - [x] Dashboard shell: sign in, side navigation, Team, API key, Chat, Account, Stores pages
 - [ ] Dashboard: Servers page
-- [ ] Dashboard: Audit log page
+- [x] Dashboard: Audit log page (`/audit`, admin only; checked in a browser at desktop and phone widths)
 - [ ] **Checkpoint:** ask a question in chat, the agent calls a WooCommerce tool, the reply streams back
 
 ## Oct 16: Buffer and integration test
@@ -72,7 +74,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 ## Oct 19–20: Ingress and WordPress init
 
-- [ ] NGINX Ingress controller, Ingress for storefront and dashboard
+- [ ] NGINX Ingress controller, Ingress for storefront and dashboard. The dashboard and the API must end up on one site, or sign in breaks (the session cookie is `SameSite=Strict`): one host with the API under a path such as `/api`, or two subdomains of one domain (`app.urumi.local` and `api.urumi.local`). Not `dashboard.local` and `api.local`. Set `APP_BASE_URL` to the dashboard's address; never set `CORS_ORIGINS` to `"*"`, the backend refuses to start with it
 - [ ] Local domain instructions (`/etc/hosts`)
 - [ ] wp-cli init Job (Helm post-install hook)
 - [ ] `values-prod.yaml`
@@ -83,7 +85,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [x] Background upstream health check (30 s, cached in Redis as `upstream:<id>:status`)
 - [ ] Servers page shows Connected / Unreachable / Disabled
 - [ ] Kill-pod test: dead server shows Unreachable, others keep working
-- [ ] Audit log page: user, server, tool, time, duration, outcome
+- [x] Audit log page: user, server, tool, time, duration, outcome (also level, refused sign-ins, server changes, server health, team/key/store changes, and a "has the log been tampered with" check)
 
 ## Oct 22–23: Bonus, multi-store provisioning
 
@@ -118,12 +120,98 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - Change password, forgot password, set password by emailed link
 - Members can belong to several stores (for cross-store questions); chat and `/internal/auth/resolve` return `store_ids`, and the gateway must filter on them
 - Chat and dashboard rate limits no longer share one bucket per user
+- The dashboard session is a cookie page scripts cannot read (`HttpOnly`, `SameSite=Strict`), no longer a token in `localStorage`; only the frontend's own address may call the API with it, and a change must come from one of its pages
+- The rate limiters call their Redis script by its id instead of sending it on every check, and send it again if Redis has forgotten it
+- Signing out ends the session at once: the token is revoked (remembered in Redis until it would have expired) and so are the user's chat tokens, as the guide asks
+- `GET /auth/session` says who is signed in without ever answering 401, so a signed-out page load prints nothing in the browser console
+- A request with no token gets 401 (not signed in), no longer 403
+- Gateway blocks an address after 20 refused logins in a minute; `python -m app.audit` verifies the audit chain
+- Gateway limits each user to 120 tool calls a minute with a token bucket: a burst up to 120, then 2 a second come back, so a user who ran dry can call again a moment later (the first version was a fixed one-minute window)
+- Team, API key and store changes are recorded in the Platform DB (`admin_events`, append-only by trigger), each with who made it and from where
+- The Audit page can ask whether the gateway's log is untouched (`GET /audit-log/verify` walks the hash chain)
+- Registry changes are recorded in the audit log (who, which server, what was sent) and refused if they cannot be
+- `GET /audit-log` on the backend (admin only) reads the gateway's audit log for the dashboard, and `GET /audit-log/platform` the team, key and store changes
+- A registry change that is recorded and then fails to commit gets a second, `failed` event
+- The gateway records the registry changes it sees itself (`registry` events), so a change made in the database without the API shows up in the audit log
 - Gateway hardening beyond the guide: no anonymous path, tokens in the URL refused, Host allowlist, health on a separate unpublished port, read-only database role, read-only container filesystem
 - Tests: `./run_tests.sh` runs the unit tests of both services (pytest), `./run_tests.sh all` adds the two end-to-end tests (`backend/scripts/smoke_test.py`, `gateway/tests/integration_test.py` with mock upstreams)
+
+## Future expansion
+
+Everything that was left out on purpose, with what exists today. None of it is needed for the assignment. Assignment work that is not built yet is in the dated sections above (for example the chat page layout, under Oct 15).
+
+### Signing in to the dashboard
+
+- **A frontend and an API on unrelated domains.** The cookie is `SameSite=Strict`, so both must be on one host or on subdomains of one domain. A cookie that crosses sites is blocked by Safari and by Chrome's stricter modes, so the real fix is to serve the API through the frontend's own address (a proxy, or one Ingress host with the API under a path). Not needed here: the Ingress can simply use one site.
+- **End every session when a password changes, or "sign out everywhere".** Signing out revokes the one session it is used from. A password change leaves other signed-in browsers signed in until their tokens expire (12 hours).
+- **Other origins for the API.** `CORS_ORIGINS` exists but is not passed through `docker-compose.yml`; only `APP_BASE_URL` is allowed. `"*"` is refused on purpose: with a cookie session it would let any site act as the signed-in user.
+
+### Signing in to the gateway
+
+- **OAuth for team members.** Today the gateway accepts API keys and chat tokens only. The 401 it sends already advertises an OAuth server, which does not exist. Room is left for it: `gateway/app/auth.py` takes a list of authenticators, and the SDK already serves the challenge and the protected-resource metadata. To build: the backend becomes the authorization server (client registration, a consent page, PKCE, refresh rotation), and the gateway checks the token's audience (`validate_token_resource=True`).
+- **Cache who a token belongs to.** The gateway asks the backend on every request. A revoked key stops at once, but a backend outage refuses every MCP request. A cache of a few seconds, cleared by a revocation notice over Redis, would loosen that.
+- **Block refused logins per token prefix too.** The block is by address, so callers behind one NAT, or behind a proxy that `FORWARDED_ALLOW_IPS` does not name, share it: one bad client gets everyone a 429 for a minute.
+- **Refused-login counter as a token bucket.** It is still a fixed one-minute window, so a burst across the boundary can reach twice the limit. Only the per-user call limit was moved to a bucket.
+
+### Rate limits
+
+- **A hard cap per minute.** The token bucket allows a burst: with a full bucket a user can make about 240 calls in the first minute (120 at once, 120 refilled), then 120 a minute. If the limit must hold for every 60 seconds, use a sliding window.
+- **Limits per role, per tool or per server.** There is one number for everyone (`CALLS_PER_MINUTE`), and it is not passed through `docker-compose.yml`, so the default of 120 applies there.
+- **Limit requests other than tool calls.** Only `tools/call` is limited. Listing tools is cheap for the gateway, but every request still makes the backend look the token up.
+
+### The gateway's audit log
+
+- **Retention.** Nothing is ever pruned. Needs a way to close a period (monthly partitions, a chain per period, a signed export) and a legal hold. The planned `chain_id` column was not added.
+- **A second copy outside the database.** Each event is also printed to the container log with its hash, but nothing ships those logs anywhere. Until something does, rows cut off the end of the table go unnoticed. Signed checkpoints written to object storage were planned and not built.
+- **Batch the writes.** Events are written one transaction at a time, in turn. Fine for a team (30 calls at once took under a second); batch them when calls reach hundreds a second.
+- **Write the intent before the call.** If the log database dies while a call is in flight, that one call is only in the container log (`NOT STORED`). A row written before the call and one after it would close that.
+- **Calls the client abandons.** Not checked: a call whose client disconnects midway may leave no row.
+- **Detail level per category.** `AUDIT_DETAIL` is one setting for every tool call.
+- **A quieter level for routine events.** Listing tools and successful sign-ins are not recorded. A DEBUG level with a minimum-level setting would allow them without noise.
+- **A request id** on each row, to match it with the gateway's and the upstream's own logs.
+- **Metrics** (`/metrics` on the private port: calls, errors, durations, queue size). Left out because nothing scrapes them yet.
+- **A break-glass switch.** Registry changes are refused while the audit log cannot record them. So an upstream cannot be disabled during such an outage.
+- **Outbox table for admin events.** Write the event into the Platform DB in the same transaction as the change, and deliver it to the gateway in the background. That closes the last gap (the backend dies between recording a change and committing it, so no `failed` event is sent). It costs a table, a delivery loop with retries and duplicate handling in the gateway, and it gives up "no change while the audit log is down".
+
+### Registry watch
+
+Basic version built 11 Oct: the gateway compares each registry read with the last one and records the difference. Its limits were weighed on 11 Oct and none needs fixing for the assignment: every change made through the API is already recorded with who made it, and the watch only adds a second, independent view. To grow it:
+
+- remember the last-seen registry across restarts (in Redis), so a direct database edit made while the gateway was down is noticed; today the first read after a start is never compared
+- write one row per change when several replicas run; today each replica writes its own
+- tell "disabled" from "deleted", and see name-only edits; today the gateway loads only enabled servers, without their names
+- link an `admin` event to the `registry` event it caused with an id, instead of matching by server and time
+- raise an alert when a `registry` change has no `admin` event; today only someone reading the log sees it
+- record each edit when several land within one refresh; today they show as one net change
+
+### Team, key and store changes (`admin_events`)
+
+- **Sign-ins and password changes** are not recorded, only team, key and store changes.
+- **A hash chain.** The table is append-only by trigger, but unlike the gateway's log nothing shows whether the database owner switched the trigger off and edited a row. The Audit page's tamper check does not cover it.
+
+### The Audit page
+
+- **One list for both sources.** Gateway events and team, key and store changes are separate views, each with its own paging.
+- **Search and more filters:** by user, server, tool or date. Today it is one category and one level at a time.
+- **Export** to CSV or JSON, and **live updates**; today there is a Refresh button.
+- **Automated tests.** The frontend has none. The page was checked by hand in a headless browser, and its "the log was changed" message was never seen there, only the endpoint behind it.
+
+### Tests and housekeeping
+
+- **A throwaway database for the end-to-end tests.** Each run leaves members, stores and audit rows in the dev database, and with `SMTP_PASSWORD` set it sends real emails to made-up addresses.
+- **Not tested:** several gateway replicas at once; Postgres going down while the gateway runs; the multi-store pages in a browser.
+- **A proper HTTP client in the backend.** It calls the gateway with the standard library in a worker thread; switch to `httpx` when the chat agent brings one in.
+
+### Already marked in the code
+
+Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
+
+- No filter on where an upstream URL may point (`backend/app/api/routes/upstreams.py`): only the admin can add one today.
+- Two chat messages sent in the same instant can each mint a chat token (`backend/app/api/routes/chat.py`).
+- An email that fails to send is logged and dropped, with no retry (`backend/app/services/mailer.py`).
 
 ## Open questions
 
 - The assignment says every member can use every enabled server. A member can now be in several stores, but is still limited to those. Decide before the demo whether both demo users get both stores (then the cross-store question works for either, not only the admin).
-- The gateway is our own (not a fork of `dunialabs/peta-core`, which was tried in a spike on 11 Oct). Still to build in it: the audit log (levels, severity, append-only, hash chain), per-user rate limits. Deferred on purpose: OAuth for members and log retention; the code leaves room for both.
+- The gateway is our own (not a fork of `dunialabs/peta-core`, which was tried in a spike on 11 Oct). OAuth for members and log retention are deferred on purpose; see "Future expansion".
 - The registry endpoint is `PATCH /upstream-servers/{id}` (partial edit), where the guide says PUT.
-- Chat tokens are not revoked on sign-out (the guide says they should be).
