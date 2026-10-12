@@ -54,6 +54,14 @@ def test_blank_optional_values_mean_unset():
     assert settings.admin_email is None and settings.admin_password is None and settings.smtp_password is None
 
 
+def test_the_first_stores_mcp_server_is_not_set_unless_both_its_address_and_token_are_given():
+    assert make().woo_mcp_url is None and make().woo_mcp_token is None
+    # docker-compose passes "" for a variable that is not in .env
+    blank = make(woo_mcp_url="", woo_mcp_token="")
+    assert blank.woo_mcp_url is None and blank.woo_mcp_token is None
+    assert (make().first_store_subdomain, make().first_store_url) == ("demo", "http://localhost:8081")
+
+
 def test_admin_email_is_lowercased_like_every_login_email():
     assert make(admin_email="Admin@Example.COM").admin_email == "admin@example.com"
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs every test in the repo. From the repo root (Git Bash on Windows):
 #
-#   ./run_tests.sh          unit tests only: fast, needs no running stack
+#   ./run_tests.sh          unit tests of the three services: fast, needs no running stack
 #   ./run_tests.sh all      also starts the compose stack with the mock upstreams
 #                           and runs both end-to-end tests (about four minutes)
 #
@@ -18,6 +18,8 @@ echo "== backend unit tests"
 (cd backend && uv run pytest -q)
 echo "== gateway unit tests"
 (cd gateway && uv run pytest -q)
+echo "== woo-mcp unit tests"
+(cd woo-mcp && uv run pytest -q)
 
 [ "${1:-}" = "all" ] || exit 0
 

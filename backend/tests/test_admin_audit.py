@@ -28,6 +28,12 @@ def test_an_event_says_who_did_what_to_whom_and_from_where():
     assert event.detail == {"prefix": "umk_abcd"} and event.client_ip == "203.0.113.9"
 
 
+def test_a_change_made_at_startup_has_no_request_and_so_no_address():
+    db = FakeDb()
+    record(db, None, ADMIN, "store.create", "demo", by="startup")
+    assert db.added[0].client_ip is None and db.added[0].detail == {"by": "startup"}
+
+
 def test_recording_never_commits_so_the_event_is_saved_with_the_change_or_not_at_all():
     db = FakeDb()
     record(db, SimpleNamespace(client=None), ADMIN, "store.create", "shop")

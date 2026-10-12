@@ -28,7 +28,7 @@ from app.schemas.auth import (
     UserOut,
 )
 from app.services.auth_tokens import consume_auth_token, issue_auth_token
-from app.services.bootstrap import create_admin_if_absent
+from app.services.bootstrap import create_admin_if_absent, create_first_store_if_absent
 from app.services.mailer import notice_email, reset_email, send_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -141,6 +141,7 @@ async def admin_signup(body: AdminSignupRequest, db: AsyncSession = Depends(get_
     admin = await create_admin_if_absent(db, body.email, body.name, body.password)
     if admin is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "An admin already exists")
+    await create_first_store_if_absent(db, admin)  # startup could not: the store needs its creator
     return admin
 
 

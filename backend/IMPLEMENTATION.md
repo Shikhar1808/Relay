@@ -33,8 +33,13 @@ A FastAPI + PostgreSQL + Redis backend covering:
   written in the same transaction as each change and read through
   `GET /audit-log/platform`
 - Token-bucket rate limiting on login, signup, and all authenticated routes
+- The first store and its WooCommerce MCP server, registered on startup the way
+  a later store is: a store whose slug is `FIRST_STORE_SUBDOMAIN` and an
+  upstream `woo-<subdomain>` that belongs to it (`app/services/bootstrap.py`).
+  Nothing is registered unless `WOO_MCP_URL` and `WOO_MCP_TOKEN` are set. The
+  server itself is in `woo-mcp/`
 
-Not built yet: the WooCommerce MCP server, real
+Not built yet: real
 Kubernetes/Helm store provisioning, LiteLLM integration. The web console
 lives in `frontend/` (Next.js) and has its own README.
 Those are later phases — see the project plan doc.
@@ -375,9 +380,10 @@ one" isn't exactly true. Upgrade this only if the demo needs it to be exact.
 
 ## What's a stub (and what replaces it later)
 
-- **Store creation** writes a DB row and returns `https://{slug}.stores.local`
+- **Store creation** (`POST /stores`) writes a DB row and returns `https://{slug}.stores.local`
   immediately with `status=ready`. No Kubernetes namespace, no Helm release,
-  no WordPress/WooCommerce, no MCP server registration happens. The real
+  no WordPress/WooCommerce, no MCP server registration happens. Only the first
+  store, the one `docker-compose.yml` runs and startup registers, is real. The real
   version is a separate Create Store Service that drives `helm install` per
   store and updates this same `stores` table through a
   `pending → provisioning → ready/failed` state machine.

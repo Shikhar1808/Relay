@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import AdminEvent, User
 
 
-def record(db: AsyncSession, request: Request, actor: User, action: str, target: str | None = None, **detail: Any) -> None:
-    """`detail` must never hold a secret: no raw key, no password, no token."""
+def record(db: AsyncSession, request: Request | None, actor: User, action: str, target: str | None = None, **detail: Any) -> None:
+    """`detail` must never hold a secret: no raw key, no password, no token.
+    `request` is None for a change the backend makes itself at startup."""
     db.add(
         AdminEvent(
             actor_id=actor.id,
@@ -22,6 +23,6 @@ def record(db: AsyncSession, request: Request, actor: User, action: str, target:
             action=action,
             target=target,
             detail=detail or None,
-            client_ip=request.client.host if request.client else None,
+            client_ip=request.client.host if request and request.client else None,
         )
     )

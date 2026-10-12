@@ -4,8 +4,8 @@ Progress against the plan in `extras/Urumi FDE — Full Implementation Guide.pdf
 and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on Kubernetes.pdf`.
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 11 Oct 2026
-- **Now:** the audit log is done end to end (gateway log, team and store changes, the dashboard's Audit page with a tamper check); next is the WooCommerce MCP server
+- **Last updated:** 12 Oct 2026
+- **Now:** the first store (WordPress, WooCommerce, MySQL) runs in compose with its own MCP server behind the gateway, checked end to end with a real checkout; next is the chat agent
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -38,10 +38,11 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 ## Oct 14: WooCommerce MCP server
 
-- [ ] WordPress and WooCommerce running in Docker
-- [ ] MCP server over Streamable HTTP with 7 tools (list/get/create/update product, list/get order, update order status)
-- [ ] Settings from `WOOCOMMERCE_URL`, `WOOCOMMERCE_KEY`, `WOOCOMMERCE_SECRET`
-- [ ] **Checkpoint:** `list_products` through the gateway, with an audit entry
+- [x] WordPress and WooCommerce running in Docker (`mysql`, `wordpress` on http://localhost:8081, and the one-shot `wp-init`, which runs `woo-mcp/deploy/wp-init.sh`; MySQL, not MariaDB)
+- [x] MCP server over Streamable HTTP with 7 tools (list/get/create/update product, list/get order, update order status) (`woo-mcp/`, with the SDK's `MCPServer`; REST API v3; no published port, and a token only the gateway holds)
+- [x] Settings from `WOOCOMMERCE_URL`, `WOOCOMMERCE_KEY`, `WOOCOMMERCE_SECRET` (plus `MCP_AUTH_TOKEN`)
+- [x] The first store and its server registered at startup, like any later store: a store row with the subdomain `demo` and an upstream `woo-demo` that belongs to it
+- [x] **Checkpoint:** `list_products` through the gateway, with an audit entry (all seven tools as a member, a product created and seen on the storefront, a guest checkout with cash on delivery returned by `list_orders` for today, each call in the audit log under that member)
 
 ## Oct 15: Chat agent, LiteLLM, dashboard shell
 
@@ -87,6 +88,14 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [ ] Kill-pod test: dead server shows Unreachable, others keep working
 - [x] Audit log page: user, server, tool, time, duration, outcome (also level, refused sign-ins, server changes, server health, team/key/store changes, and a "has the log been tampered with" check)
 
+## Before the bonus: the graded notes
+
+Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
+
+- [ ] Root `README.md`: local setup, VPS setup, placing an order, connecting an MCP client, using chat
+- [ ] System design and tradeoffs note
+- [ ] Threat model note
+
 ## Oct 22–23: Bonus, multi-store provisioning
 
 - [x] Stores page and endpoints: create and list (stub, no real provisioning)
@@ -97,19 +106,16 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [ ] NetworkPolicies, ResourceQuota, LimitRange per store namespace
 - [ ] Clean teardown
 
-## Oct 24: Stand-out items and notes
+## Oct 24: Stand-out items
 
 - [x] Rate limits per user and per IP
 - [ ] Per-role tool permissions
 - [ ] Prompt injection check on tool descriptions
 - [ ] Audit log heatmap
 - [ ] Confirmation step for write tools in chat
-- [ ] Threat model note
-- [ ] System design and tradeoffs note
 
 ## Oct 25–26: Polish, docs, video
 
-- [ ] Root `README.md`: local setup, VPS setup, placing an order, connecting an MCP client, using chat
 - [ ] Demo video
 - [ ] Final definition-of-done run with two users
 - [ ] Submit the form
@@ -134,7 +140,10 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - A registry change that is recorded and then fails to commit gets a second, `failed` event
 - The gateway records the registry changes it sees itself (`registry` events), so a change made in the database without the API shows up in the audit log
 - Gateway hardening beyond the guide: no anonymous path, tokens in the URL refused, Host allowlist, health on a separate unpublished port, read-only database role, read-only container filesystem
-- Tests: `./run_tests.sh` runs the unit tests of both services (pytest), `./run_tests.sh all` adds the two end-to-end tests (`backend/scripts/smoke_test.py`, `gateway/tests/integration_test.py` with mock upstreams)
+- The first store is a store like any other, not a special case: it has a row in `stores`, a subdomain checked by the one rule later stores will use (a DNS label of at most 30 characters, platform names such as `api` refused), and its server is `woo-<subdomain>`, limited to the admin and that store's members
+- The store's REST key belongs to a WordPress user with the Shop manager role, not to the administrator; the key pair comes from `.env` and the init script registers it, so nothing is clicked and nothing is read back out of WordPress
+- The WooCommerce tools return short records (no address, phone or IP of a customer), and a refusal from the store reaches the model as a readable tool error
+- Tests: `./run_tests.sh` runs the unit tests of the three services (pytest), `./run_tests.sh all` adds the two end-to-end tests (`backend/scripts/smoke_test.py`, `gateway/tests/integration_test.py` with mock upstreams)
 
 ## Future expansion
 
@@ -200,6 +209,7 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 
 - **A throwaway database for the end-to-end tests.** Each run leaves members, stores and audit rows in the dev database, and with `SMTP_PASSWORD` set it sends real emails to made-up addresses.
 - **Not tested:** several gateway replicas at once; Postgres going down while the gateway runs; the multi-store pages in a browser.
+- **No automated end-to-end test with a real WordPress.** The WooCommerce checkpoint was run once by script on 12 Oct and is not in `./run_tests.sh all`; only the store's registration is checked there. Add the scripted run with the chat step.
 - **A proper HTTP client in the backend.** It calls the gateway with the standard library in a worker thread; switch to `httpx` when the chat agent brings one in.
 
 ### Already marked in the code
@@ -212,6 +222,23 @@ Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 
 ## Open questions
 
-- The assignment says every member can use every enabled server. A member can now be in several stores, but is still limited to those. Decide before the demo whether both demo users get both stores (then the cross-store question works for either, not only the admin).
+- The assignment says every member can use every enabled server. A member can now be in several stores, but is still limited to those, and since 12 Oct that includes the first store: a member sees `woo-demo`'s tools only once assigned to it. Decide before the demo whether both demo users get both stores (then the cross-store question works for either, not only the admin).
 - The gateway is our own (not a fork of `dunialabs/peta-core`, which was tried in a spike on 11 Oct). OAuth for members and log retention are deferred on purpose; see "Future expansion".
 - The registry endpoint is `PATCH /upstream-servers/{id}` (partial edit), where the guide says PUT.
+
+## WooCommerce New Store and MCP
+#### Design choices
+
+- A separate worker runs Helm, not the backend. It is the same image started with a different command, with no HTTP port and its own Kubernetes permissions, so the public API never holds the right to create namespaces.
+- The progress stream is SSE over Redis pub/sub (decided 12 Oct, replacing the re-read-every-second idea). The worker saves the row, then publishes the step; the endpoint subscribes first, then sends the row's current state, then forwards. Pub/sub does not replay, so after 15 quiet seconds the endpoint re-reads the row.
+- Each step is safe to repeat (helm upgrade --install), so a restarted worker continues from the saved step.
+
+#### Decided on 12 Oct
+
+- One WooCommerce MCP server per store (the same image, that store's key pair), not one server for all stores.
+- Every store's server is named `woo-<subdomain>`, the first store included.
+- MCP tool servers are written with the official SDK's `MCPServer` (what was called FastMCP before SDK 2). No OAuth yet, on the server or towards WooCommerce.
+- Nothing about domains is configured until the whole project works locally; domain, DNS and TLS come afterwards with the production changes. No GoDaddy integration: two wildcard DNS records, set by hand, cover every store.
+- Chat: Groq through LiteLLM with OpenRouter as the fallback; the backend runs the tool loop; chat on the left, output panel on the right.
+- Deleting a store asks for its name again and a reason, and both are recorded.
+- On hold until said otherwise: which two servers are the second and third upstream; Prometheus and Grafana.

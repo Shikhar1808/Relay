@@ -49,6 +49,13 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-Urumi <onboarding@resend.dev>}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      # The first store and its MCP server, registered on startup like any later store
+      # (app/services/bootstrap.py). Its tools are named woo-<subdomain>__<tool>.
+      FIRST_STORE_SUBDOMAIN: ${FIRST_STORE_SUBDOMAIN:-demo}
+      FIRST_STORE_NAME: ${FIRST_STORE_NAME:-Demo Store}
+      FIRST_STORE_URL: ${FIRST_STORE_URL:-http://localhost:8081}
+      WOO_MCP_URL: http://woo-mcp:8000/mcp
+      WOO_MCP_TOKEN: ${WOO_MCP_TOKEN:?set WOO_MCP_TOKEN in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,6 +106,80 @@ services:
     ports:
       - "8080:8080"  # /mcp only; the private port (9090: health, audit log for the backend) is deliberately not published
 
+  # ---- The first store: WordPress + WooCommerce on its own MySQL, and its MCP server ----
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      # Over TCP on purpose: while the image is still initialising, MySQL only listens on its socket.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  wordpress:
+    image: wordpress:7.1-php8.3-apache
+    environment: &wordpress-db
+      WORDPRESS_DB_HOST: mysql
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - wordpress_data:/var/www/html
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://localhost/wp-login.php') === false ? 1 : 0);"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "8081:80"  # the storefront and wp-admin
+
+  # One-shot: installs WooCommerce and registers the MCP server's REST key. Safe to run again.
+  wp-init:
+    image: wordpress:cli-2.12-php8.3
+    user: "33:33"  # www-data in the wordpress image; the cli image's own user cannot write that volume
+    environment:
+      <<: *wordpress-db
+      WP_URL: ${FIRST_STORE_URL:-http://localhost:8081}
+      WP_TITLE: ${FIRST_STORE_NAME:-Demo Store}
+      WP_ADMIN_USER: ${WP_ADMIN_USER:-admin}
+      WP_ADMIN_PASSWORD: ${WP_ADMIN_PASSWORD:?set WP_ADMIN_PASSWORD in .env}
+      WP_ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      WP_TIMEZONE: ${WP_TIMEZONE:-Asia/Kolkata}
+      WOOCOMMERCE_KEY: ${WOOCOMMERCE_KEY:?set WOOCOMMERCE_KEY in .env}
+      WOOCOMMERCE_SECRET: ${WOOCOMMERCE_SECRET:?set WOOCOMMERCE_SECRET in .env}
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./woo-mcp/deploy/wp-init.sh:/wp-init.sh:ro
+    entrypoint: ["sh", "/wp-init.sh"]
+    depends_on:
+      wordpress:
+        condition: service_healthy
+    restart: "no"
+
+  woo-mcp:
+    build: ./woo-mcp
+    environment:
+      WOOCOMMERCE_URL: http://wordpress
+      WOOCOMMERCE_KEY: ${WOOCOMMERCE_KEY}
+      WOOCOMMERCE_SECRET: ${WOOCOMMERCE_SECRET}
+      # What the gateway must present; the backend stores the same value, encrypted, in the registry.
+      MCP_AUTH_TOKEN: ${WOO_MCP_TOKEN}
+    read_only: true
+    depends_on:
+      wp-init:
+        condition: service_completed_successfully
+    # No ports on purpose: only the gateway reaches this, over the compose network.
+
   # Fake upstream MCP servers for gateway/tests/integration_test.py:
   #   docker compose --profile test up -d
   mock-upstream: &mock-upstream
@@ -132,3 +213,5 @@ services:
 
 volumes:
   postgres_data:
+  mysql_data:
+  wordpress_data:

@@ -465,9 +465,22 @@ def main() -> int:
     assert ("api_key.revoke", member_did) in about_member and ("store.member_remove", admin_did) in about_member, about_member
     assert [event["action"] for event in events if event["target"] == store["slug"]] == ["store.create"], events
     for event in events:
-        assert event["category"] == "platform" and event["severity"] == "NOTICE" and event["client_ip"], event
+        assert event["category"] == "platform" and event["severity"] == "NOTICE", event
+        # Where it came from, except for what the backend did itself at startup: that has no caller.
+        assert event["client_ip"] or (event["detail"] or {}).get("by") == "startup", event
     assert raw_key not in r.text and temp_password not in r.text, "a secret reached the audit log"
     _ok("each change is there with who made it (the admin, or the member for their own key), and no key or password")
+
+    _step("the first store and its MCP server were registered at startup, like any later store")
+    first = os.environ.get("FIRST_STORE_SUBDOMAIN", env.get("FIRST_STORE_SUBDOMAIN", "demo"))
+    r = client.get("/stores", headers=admin_headers)
+    first_store = next((s for s in r.json() if s["slug"] == first), None)
+    assert first_store and first_store["status"] == "ready" and first_store["url"], r.text
+    r = client.get("/upstream-servers", headers=admin_headers)
+    woo = next((u for u in r.json() if u["slug"] == f"woo-{first}"), None)
+    assert woo and woo["store_id"] == first_store["id"] and woo["has_credential"] and woo["enabled"], r.text
+    assert [(e["action"], e["detail"]["by"]) for e in events if e["target"] == first] == [("store.create", "startup")], events
+    _ok(f'the store "{first}" is in the list, its server woo-{first} belongs to it, and the record says startup made it')
     for refused in ("UPDATE admin_events SET action = 'x'", "DELETE FROM admin_events", "TRUNCATE admin_events"):
         assert "append-only" in _psql(repo_root, refused, ok=False), refused
     _ok("rows there cannot be changed, deleted or truncated, even by the database owner")

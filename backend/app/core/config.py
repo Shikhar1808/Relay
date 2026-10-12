@@ -55,7 +55,16 @@ class Settings(BaseSettings):
     # session that would let any site the user visits act as them.
     cors_origins: list[str] | None = None
 
-    @field_validator("admin_email", "admin_password", "smtp_password", mode="before")
+    # The first store and its WooCommerce MCP server, registered on startup the way a
+    # later store is (app/services/bootstrap.py). With the server's address or its token
+    # unset, nothing is registered. The token is what the gateway presents to that server.
+    first_store_subdomain: str = "demo"
+    first_store_name: str = "Demo Store"
+    first_store_url: str = "http://localhost:8081"
+    woo_mcp_url: str | None = None
+    woo_mcp_token: str | None = None
+
+    @field_validator("admin_email", "admin_password", "smtp_password", "woo_mcp_url", "woo_mcp_token", mode="before")
     @classmethod
     def _blank_env_means_unset(cls, value: str | None) -> str | None:
         # docker-compose's ${VAR:-} substitutes "" (present-but-blank) when
