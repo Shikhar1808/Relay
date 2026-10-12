@@ -40,6 +40,18 @@ as `woo-<subdomain>`, so its tools read `woo-<subdomain>__list_orders`.
   product that is already there. Renaming moves that SKU with the name; a SKU
   the merchant chose is never changed. The other write tools are safe to
   repeat as they are: they set a value, they do not add anything.
+- **Hints.** Every tool says what it does to the store, so a client can ask
+  before a write and knows what is safe to repeat (MCP tool annotations; the
+  gateway passes them on unchanged):
+
+  | Tools | `readOnlyHint` | `destructiveHint` | `idempotentHint` |
+  |---|---|---|---|
+  | `list_products`, `get_product`, `list_orders`, `get_order` | true | | |
+  | `create_product` | false | false: it only adds | true: the store refuses a repeat |
+  | `update_product`, `update_order_status` | false | true: they overwrite | true |
+
+  All seven carry `openWorldHint: false`: a tool reaches this one store and
+  nothing else.
 - **Lists** return one page and `total`, how many match in all (WooCommerce's
   `X-WP-Total`), so a caller knows when to ask for the next `page`.
 - **Dates** are in the store's time zone. For `after` and `before` a date
@@ -169,6 +181,6 @@ tests/
   not update the registered upstream: the backend never touches a store that
   already exists. Edit the server in the dashboard, or with
   `PATCH /upstream-servers/{id}`.
-- Tools carry no read-only or destructive hints yet; they come with the chat
-  agent's confirmation step for write tools.
+- The hints are only declared here. Nothing acts on them until the chat
+  agent's confirmation step for write tools is built.
 - There is no automated end-to-end test with a real WordPress yet.

@@ -16,6 +16,7 @@ import httpx2
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -36,6 +37,14 @@ Stock = Annotated[int, Field(ge=0)]
 # small enough for a model's context, and no more customer data than a question needs.
 _PRODUCT_FIELDS = ("id", "name", "slug", "status", "price", "regular_price", "stock_status", "stock_quantity")
 _OUR_SKU = re.compile(r"mcp-[0-9a-f]{16}")  # what _sku makes; any other SKU is the merchant's own
+
+# What each tool says about itself, so a client can ask before a write and knows what is safe to
+# repeat. None of them reaches anything but this one store (open_world_hint).
+_READS = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+# Only adds, and a repeat is safe: the store refuses a second product of the same name (_sku).
+_ADDS = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+# Overwrites what was there; the same values sent again change nothing more.
+_OVERWRITES = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False)
 
 
 def _client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.AsyncClient:
@@ -132,7 +141,7 @@ def _order(order: dict[str, Any]) -> dict[str, Any]:
 
 # ---- products ----------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(annotations=_READS)
 async def list_products(search: str | None = None, status: ProductStatus | None = None, page: Page = 1, per_page: PerPage = 20) -> dict[str, Any]:
     """List the store's products, newest first. `search` matches the product name.
     `total` is how many match in all: if it is more than came back, ask for the next `page`."""
@@ -140,13 +149,13 @@ async def list_products(search: str | None = None, status: ProductStatus | None 
     return {"products": [_product(product) for product in products], "total": total}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READS)
 async def get_product(product_id: Id) -> dict[str, Any]:
     """One product by its id, with its description."""
     return _product(await _woo("GET", f"products/{product_id}"), "description")
 
 
-@mcp.tool()
+@mcp.tool(annotations=_ADDS)
 async def create_product(
     name: Annotated[str, Field(min_length=1, max_length=200)],
     regular_price: Price,
@@ -164,7 +173,7 @@ async def create_product(
     return _product(await _woo("POST", "products", json=body), "description")
 
 
-@mcp.tool()
+@mcp.tool(annotations=_OVERWRITES)
 async def update_product(
     product_id: Id,
     name: Annotated[str, Field(min_length=1, max_length=200)] | None = None,
@@ -189,7 +198,7 @@ async def update_product(
 
 # ---- orders ------------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(annotations=_READS)
 async def list_orders(
     status: OrderStatus | None = None,
     after: str | None = None,
@@ -210,13 +219,13 @@ async def list_orders(
     return {"orders": [_order(order) for order in orders], "total": total}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READS)
 async def get_order(order_id: Id) -> dict[str, Any]:
     """One order by its id: status, total, customer and the items bought."""
     return _order(await _woo("GET", f"orders/{order_id}"))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_OVERWRITES)
 async def update_order_status(order_id: Id, status: OrderStatus) -> dict[str, Any]:
     """Move an order to another status, for example "completed" once it has been delivered."""
     return _order(await _woo("PUT", f"orders/{order_id}", json={"status": status}))

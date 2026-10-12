@@ -4,7 +4,7 @@ Progress against the plan in `extras/Urumi FDE — Full Implementation Guide.pdf
 and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on Kubernetes.pdf`.
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 12 Oct 2026
+- **Last updated:** 13 Oct 2026
 - **Now:** the first store (WordPress, WooCommerce, MySQL) runs in compose with its own MCP server behind the gateway, checked end to end with a real checkout; next is the chat agent
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
@@ -49,6 +49,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [ ] LiteLLM proxy with one provider
 - [x] Short chat token issued and stored in Redis and the database (inside `POST /chat/message`)
 - [ ] `/chat/message` calls the LLM with the gateway's tools (currently a stub reply)
+  - The WooCommerce tools already declare hints (read-only, overwrites, safe to repeat; 13 Oct). The hints are only declared for now: nothing acts on them until the chat agent's confirmation step for write tools is built (under Oct 24).
 - [ ] Streaming replies, and showing which tools were called
 - [ ] Chat page layout after `refernces/chatBotDesign.png`: the chat agent on the left, and on the right a panel that shows what the agent changed and its output (tool calls and their results), laid out to read well. Not started: today's agent is a stub with no output to show
 - [x] Dashboard shell: sign in, side navigation, Team, API key, Chat, Account, Stores pages
@@ -113,7 +114,7 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - [ ] Per-role tool permissions
 - [ ] Prompt injection check on tool descriptions
 - [ ] Audit log heatmap
-- [ ] Confirmation step for write tools in chat
+- [ ] Confirmation step for write tools in chat (reads the tool hints the WooCommerce tools already declare; until this is built nothing acts on them)
 
 ## Oct 25–26: Polish, docs, video
 
@@ -147,6 +148,7 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - The list tools also return `total`, how many match in all, so a full page is not taken for the whole answer
 - A repeated `create_product` cannot make a duplicate: the SKU is made from the name and the store itself refuses a second one, also when requests arrive at once (eight at once made one product); the repeat is refused with the id of the product already there
 - The store's install script sets the store's own settings once and then leaves them to its admin; what `.env` holds (the wp-admin password, the REST key) is applied on every start; WooCommerce is pinned to 11.2.1
+- Each WooCommerce tool says whether it reads, adds or overwrites (MCP tool annotations), and the gateway passes that on, ready for the chat's confirmation step for write tools
 - A first store registered by the admin's signup is recorded as the signup's doing, with the caller's address, and the signup answers normally when the store was already registered
 - Tests: `./run_tests.sh` runs the unit tests of the three services (pytest), `./run_tests.sh all` adds the two end-to-end tests (`backend/scripts/smoke_test.py`, `gateway/tests/integration_test.py` with mock upstreams)
 

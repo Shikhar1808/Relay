@@ -69,6 +69,19 @@ async def test_the_server_offers_the_seven_tools():
     }
 
 
+async def test_every_tool_says_whether_it_reads_adds_or_overwrites():
+    # A client such as the chat agent reads these to ask before a write and to know what is safe to repeat.
+    hints = {tool.name: tool.annotations for tool in await main.mcp.list_tools()}
+    for name, hint in hints.items():
+        assert hint is not None, name
+        assert hint.read_only_hint is (name in {"list_products", "get_product", "list_orders", "get_order"}), name
+        assert hint.open_world_hint is False, name  # a tool reaches this one store and nothing else
+    for name in ("update_product", "update_order_status"):  # they overwrite; the same values again change nothing more
+        assert (hints[name].destructive_hint, hints[name].idempotent_hint) == (True, True), name
+    # It only adds, and the store refuses a second product of the same name, so a repeat is safe.
+    assert (hints["create_product"].destructive_hint, hints["create_product"].idempotent_hint) == (False, True)
+
+
 async def test_every_request_carries_the_key_pair_and_says_it_came_over_https(store):
     await call("list_products")
     (request,) = store.requests
