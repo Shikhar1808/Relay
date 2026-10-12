@@ -12,6 +12,7 @@ which needs that admin as the store's creator.
 import logging
 import uuid
 
+from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,10 +59,11 @@ async def bootstrap_admin() -> None:
         await create_admin_if_absent(db, settings.admin_email, "Admin", settings.admin_password)
 
 
-async def create_first_store_if_absent(db: AsyncSession, admin: User) -> Store | None:
+async def create_first_store_if_absent(db: AsyncSession, admin: User, request: Request | None = None) -> Store | None:
     """Registers the first store and its WooCommerce MCP server, so the dashboard
     opens with one server already there. Returns the store, or None if there
-    was nothing to do.
+    was nothing to do. `request` is the admin's signup when that is what
+    registers it; at startup there is none.
 
     The rows are the ones any later store gets: a store whose slug is its
     subdomain, and an upstream `woo-<subdomain>` that belongs to it, so only the
@@ -95,7 +97,7 @@ async def create_first_store_if_absent(db: AsyncSession, admin: User) -> Store |
             store_id=store.id,
         )
     )
-    record(db, None, admin, "store.create", subdomain, name=settings.first_store_name, by="startup")
+    record(db, request, admin, "store.create", subdomain, name=settings.first_store_name, by="startup" if request is None else "signup")
     try:
         await db.commit()
     except IntegrityError:

@@ -479,8 +479,9 @@ def main() -> int:
     r = client.get("/upstream-servers", headers=admin_headers)
     woo = next((u for u in r.json() if u["slug"] == f"woo-{first}"), None)
     assert woo and woo["store_id"] == first_store["id"] and woo["has_credential"] and woo["enabled"], r.text
-    assert [(e["action"], e["detail"]["by"]) for e in events if e["target"] == first] == [("store.create", "startup")], events
-    _ok(f'the store "{first}" is in the list, its server woo-{first} belongs to it, and the record says startup made it')
+    # Its store.create event is not looked for here: it was written on the database's first start, and
+    # `events` is only the latest 200. tests/test_first_store.py checks that it is recorded.
+    _ok(f'the store "{first}" is in the list and its server woo-{first} belongs to it')
     for refused in ("UPDATE admin_events SET action = 'x'", "DELETE FROM admin_events", "TRUNCATE admin_events"):
         assert "append-only" in _psql(repo_root, refused, ok=False), refused
     _ok("rows there cannot be changed, deleted or truncated, even by the database owner")

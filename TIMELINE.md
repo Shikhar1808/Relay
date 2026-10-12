@@ -102,6 +102,7 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - [ ] Delete a store
 - [ ] Create Store Service: Helm install per store in its own namespace
 - [ ] Provisioning state machine with retry and recovery
+- [ ] Creating or registering a store that already exists reconnects to it (`helm upgrade --install`): no second store, its pods started again if they are down, its volumes kept; only an explicit delete removes them
 - [ ] Automatic MCP registration per store
 - [ ] NetworkPolicies, ResourceQuota, LimitRange per store namespace
 - [ ] Clean teardown
@@ -143,6 +144,10 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - The first store is a store like any other, not a special case: it has a row in `stores`, a subdomain checked by the one rule later stores will use (a DNS label of at most 30 characters, platform names such as `api` refused), and its server is `woo-<subdomain>`, limited to the admin and that store's members
 - The store's REST key belongs to a WordPress user with the Shop manager role, not to the administrator; the key pair comes from `.env` and the init script registers it, so nothing is clicked and nothing is read back out of WordPress
 - The WooCommerce tools return short records (no address, phone or IP of a customer), and a refusal from the store reaches the model as a readable tool error
+- The list tools also return `total`, how many match in all, so a full page is not taken for the whole answer
+- A repeated `create_product` cannot make a duplicate: the SKU is made from the name and the store itself refuses a second one, also when requests arrive at once (eight at once made one product); the repeat is refused with the id of the product already there
+- The store's install script sets the store's own settings once and then leaves them to its admin; what `.env` holds (the wp-admin password, the REST key) is applied on every start; WooCommerce is pinned to 11.2.1
+- A first store registered by the admin's signup is recorded as the signup's doing, with the caller's address, and the signup answers normally when the store was already registered
 - Tests: `./run_tests.sh` runs the unit tests of the three services (pytest), `./run_tests.sh all` adds the two end-to-end tests (`backend/scripts/smoke_test.py`, `gateway/tests/integration_test.py` with mock upstreams)
 
 ## Future expansion
@@ -241,4 +246,90 @@ Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 - Nothing about domains is configured until the whole project works locally; domain, DNS and TLS come afterwards with the production changes. No GoDaddy integration: two wildcard DNS records, set by hand, cover every store.
 - Chat: Groq through LiteLLM with OpenRouter as the fallback; the backend runs the tool loop; chat on the left, output panel on the right.
 - Deleting a store asks for its name again and a reason, and both are recorded.
+- A store that already exists is never created a second time. Registering it again connects to the one that is there; on Kubernetes its pods are started again if they are down, and its data is kept. Only an explicit delete removes a store's pods. Built today for the registry (the first store and its server are left as they are when they already exist); the pod part comes with the Create Store Service.
 - On hold until said otherwise: which two servers are the second and third upstream; Prometheus and Grafana.
+
+
+## Keys
+
+Every secret in the project is a random value from the operating system's cryptographic random generator, reached through Python's secrets module (or os.urandom). None is typed by hand or derived from another value.
+
+Generated once, kept in .env
+
+┌────────────────────────────────────────┬────────────────────────────────────────────────────────────┬───────────────────────────┐
+│                 Secret                 │                          Command                           │           Size            │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ WOOCOMMERCE_KEY, WOOCOMMERCE_SECRET    │ 'ck_' + secrets.token_hex(20), same with 'cs_'             │ 160 bits each             │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ WOO_MCP_TOKEN                          │ secrets.token_urlsafe(48)                                  │ 384 bits                  │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ MYSQL_PASSWORD, MYSQL_ROOT_PASSWORD    │ secrets.token_urlsafe(24)                                  │ 192 bits                  │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ WP_ADMIN_PASSWORD                      │ secrets.token_urlsafe(12)                                  │ 96 bits                   │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ INTERNAL_SERVICE_TOKEN, AUDIT_HMAC_KEY │ secrets.token_urlsafe(48)                                  │ 384 bits                  │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ GATEWAY_ENCRYPTION_KEY                 │ base64(os.urandom(32))                                     │ 256 bits, the AES-256 key │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ GATEWAY_DB_PASSWORD                    │ 48 hex characters, because it sits inside a connection URL │ 192 bits                  │
+└────────────────────────────────────────┴────────────────────────────────────────────────────────────┴───────────────────────────┘
+
+I generated the first four rows in this session with one short Python script that appended them to .env without printing them. The last three rows were already in your .env; their lengths match the commands written in .env.example.
+
+Generated by the backend while it runs
+
+┌─────────────────────────────────┬──────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────┐
+│             Secret              │           Code (backend/app/core/security.py)            │               What the database keeps                │
+├─────────────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ Member's gateway API key        │ "umk_" + secrets.token_hex(24)                           │ SHA-256 hash and the first 12 characters for display │
+├─────────────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ Chat token                      │ "chat_" + secrets.token_urlsafe(32)                      │ SHA-256 hash; the token never reaches the browser    │
+├─────────────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ Invite and password-reset links │ secrets.token_urlsafe(32)                                │ SHA-256 hash                                         │
+├─────────────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ Member's temporary password     │ secrets.token_urlsafe(12)                                │ bcrypt hash                                          │
+├─────────────────────────────────┼──────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ Login session                   │ A JWT signed with JWT_SECRET (HS256); signed, not random │ Nothing; only revoked ones are noted in Redis        │
+└─────────────────────────────────┴──────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────┘
+
+How each is stored
+
+- Hashed, when the system only has to check it: API keys, chat tokens, link tokens (SHA-256) and passwords (bcrypt). A stolen database gives nothing usable.
+- Encrypted, when the system has to send it onward: the gateway must present each server's MCP token, so it is stored with AES-256-GCM. The key is in GATEWAY_ENCRYPTION_KEY, outside the database.
+- Plain in .env, when a service needs it at start-up. .env is gitignored; in Kubernetes these become Secrets.
+
+A likely follow-up is why API keys use plain SHA-256 and not bcrypt. bcrypt is slow on purpose to protect short human passwords from guessing. A 192-bit random key cannot be guessed, so a fast hash is enough and keeps every gateway call quick.
+
+
+## Woocommerce Key and Secrets
+WooCommerce only provides a key when a person clicks "Add key" in wp-admin, and this store has to set itself up with nobody clicking. That is the whole reason.
+
+- No person in the loop. docker compose up must bring the store up ready to use, and later stores will be created from the dashboard. Neither has someone sitting in wp-admin.
+- WooCommerce shows the secret only once. It appears on the screen at creation and is not shown again, so a script cannot fetch it afterwards. Something would have to catch it at that moment and hand it to woo-mcp.
+- There is no command for it. WooCommerce has no supported command-line or API way to create a REST key; the only built-in path is that wp-admin button.
+- Generating first makes re-runs safe. The script inserts the same pair every time, so running it twice changes nothing. Letting WooCommerce generate would make a new key on every run.
+- woo-mcp knows its credentials from the start. Both sides read the same two values from .env, so nothing waits for a key that does not exist yet.
+
+The key is no weaker for it. I checked the installed plugin's source, and the "Add key" button does this:
+
+$consumer_key    = 'ck_' . wc_rand_hash();   // bin2hex( random_bytes( 20 ) )
+$consumer_secret = 'cs_' . wc_rand_hash();
+
+That is 20 random bytes as 40 hex characters, the same as secrets.token_hex(20). The script then stores the pair the way WooCommerce does, with the key hashed.
+
+The cost is that the script writes straight into WooCommerce's table instead of going through a supported interface, so a future WooCommerce version could break it.
+
+The manual way still works too: click "Add key" in wp-admin, paste the two values into .env as WOOCOMMERCE_KEY and WOOCOMMERCE_SECRET, and restart woo-mcp. Do not run wp-init again after that: it would register the .env pair a second time under the label urumi-mcp.
+
+
+A repeated create cannot make a duplicate product. A true transaction is not possible here, because WooCommerce's REST API has no transactions or idempotency keys. What it does have is a rule that refuses a second product with the same SKU, even when requests arrive at once. So create_product now sends a SKU made from the product name, and a repeat is refused with the id of the product already there. Against a real store:
+   - Eight creates of the same name at once made one product.
+   - A create that I abandoned after 50 ms still went through; the retry was refused with that product's id, and the store held exactly one.
+   - Renaming a product frees its old name and takes the new one.
+   - A SKU the merchant chose is never changed.
+
+Before. wp-init.sh runs every time you do docker compose up. Each time, it set the time zone, turned shipping off, enabled cash on delivery, turned "coming soon" off, and added Sample Mug if the store had no products. So if you changed any of those in wp-admin (say, enabled shipping), the next start silently put it back.
+Now. The script does those five things once. When it finishes, it saves a small flag in the store's own database (an option named urumi_store_set_up with the value yes). On every later start it sees the flag and skips that whole block, so whatever you set in wp-admin stays.
+"On a throwaway store I changed those settings…" That was my test. I built a second, temporary store from scratch, turned "coming soon" on, changed the time zone to UTC and deleted every product, then ran the script again. All three stayed as I had left them and no Sample Mug came back. I then deleted that temporary store; your real one was not touched by the test.
+"Your own store ran them one last time…" Your demo store was created before this change, so it had no flag yet. When I restarted your stack, the script found no flag, applied the five settings one more time, and then wrote the flag. From the next start onward your store's settings are left alone.
+Two things the script still does on every start, on purpose, because they come from .env: it sets the wp-admin password to WP_ADMIN_PASSWORD if it differs, and it registers the REST key pair.

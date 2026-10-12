@@ -133,7 +133,7 @@ async def me(user: User = Depends(get_current_user)) -> User:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(_ip_rate_limit)],
 )
-async def admin_signup(body: AdminSignupRequest, db: AsyncSession = Depends(get_db)) -> User:
+async def admin_signup(body: AdminSignupRequest, request: Request, db: AsyncSession = Depends(get_db)) -> UserOut:
     """Creates the one and only admin. Only works while no admin exists yet —
     see app/services/bootstrap.py. Once an admin exists (via this route or the
     ADMIN_EMAIL/ADMIN_PASSWORD env vars), this always returns 409.
@@ -141,8 +141,10 @@ async def admin_signup(body: AdminSignupRequest, db: AsyncSession = Depends(get_
     admin = await create_admin_if_absent(db, body.email, body.name, body.password)
     if admin is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "An admin already exists")
-    await create_first_store_if_absent(db, admin)  # startup could not: the store needs its creator
-    return admin
+    # Read now: if another replica registers the store first, the rollback leaves this row unreadable.
+    created = UserOut.model_validate(admin)
+    await create_first_store_if_absent(db, admin, request)  # startup could not: the store needs its creator
+    return created
 
 
 @router.post(

@@ -39,6 +39,7 @@ class FakeStore:
     def __init__(self) -> None:
         self.requests: list[httpx2.Request] = []
         self.status, self.body = 200, []
+        self.headers: dict[str, str] = {}
         self.down = False
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
@@ -46,8 +47,8 @@ class FakeStore:
         if self.down:
             raise httpx2.ConnectError("no route to host")
         if isinstance(self.body, str):
-            return httpx2.Response(self.status, text=self.body)
-        return httpx2.Response(self.status, json=self.body)
+            return httpx2.Response(self.status, text=self.body, headers=self.headers)
+        return httpx2.Response(self.status, json=self.body, headers=self.headers)
 
 
 @pytest.fixture
@@ -95,14 +96,12 @@ async def test_a_time_of_day_is_passed_on_as_given_and_unset_filters_are_left_ou
 
 async def test_orders_come_back_as_short_records(store):
     store.body = [ORDER]
-    assert await call("list_orders") == {
-        "orders": [{
-            "id": 7, "number": "7", "status": "processing", "total": "38.00", "currency": "INR",
-            "date_created": "2026-10-12T10:15:00", "payment_method": "Cash on delivery",
-            "customer": "Asha Rao", "email": "asha@example.com",
-            "items": [{"name": "Blue Mug", "quantity": 2, "total": "38.00"}],
-        }]
-    }
+    assert (await call("list_orders"))["orders"] == [{
+        "id": 7, "number": "7", "status": "processing", "total": "38.00", "currency": "INR",
+        "date_created": "2026-10-12T10:15:00", "payment_method": "Cash on delivery",
+        "customer": "Asha Rao", "email": "asha@example.com",
+        "items": [{"name": "Blue Mug", "quantity": 2, "total": "38.00"}],
+    }]
 
 
 async def test_get_order_asks_for_that_order(store):
@@ -129,7 +128,7 @@ async def test_a_status_woocommerce_does_not_have_is_refused_before_the_store_is
 
 async def test_list_products_passes_the_search_and_returns_short_records(store):
     store.body = [PRODUCT]
-    assert await call("list_products", search="mug", per_page=5) == {"products": [SHORT_PRODUCT]}
+    assert (await call("list_products", search="mug", per_page=5))["products"] == [SHORT_PRODUCT]
     (request,) = store.requests
     assert request.method == "GET" and request.url.path == "/wp-json/wc/v3/products"
     assert dict(request.url.params) == {"page": "1", "per_page": "5", "search": "mug"}
@@ -146,7 +145,9 @@ async def test_create_product_publishes_a_simple_product_with_a_two_decimal_pric
     assert (await call("create_product", name="Blue Mug", regular_price=19))["id"] == 12
     (request,) = store.requests
     assert request.method == "POST" and request.url.path == "/wp-json/wc/v3/products"
-    assert json.loads(request.content) == {"name": "Blue Mug", "type": "simple", "status": "publish", "regular_price": "19.00"}
+    body = json.loads(request.content)
+    assert body.pop("sku").startswith("mcp-")
+    assert body == {"name": "Blue Mug", "type": "simple", "status": "publish", "regular_price": "19.00"}
 
 
 async def test_a_stock_quantity_turns_stock_management_on(store):
@@ -154,6 +155,12 @@ async def test_a_stock_quantity_turns_stock_management_on(store):
     await call("create_product", name="Blue Mug", regular_price=19, stock_quantity=5, description="Holds tea.", status="draft")
     body = json.loads(store.requests[0].content)
     assert (body["manage_stock"], body["stock_quantity"], body["description"], body["status"]) == (True, 5, "Holds tea.", "draft")
+
+
+async def test_a_price_that_is_not_a_number_of_money_is_refused_before_the_store_is_asked(store):
+    with pytest.raises(ToolError):
+        await call("create_product", name="Blue Mug", regular_price=float("inf"))
+    assert store.requests == []
 
 
 async def test_update_product_sends_only_what_was_given(store):
@@ -168,6 +175,81 @@ async def test_update_product_with_nothing_to_change_is_refused_before_the_store
     with pytest.raises(ToolError, match="Nothing to change"):
         await call("update_product", product_id=12)
     assert store.requests == []
+
+
+# ---- no duplicates: a create repeated after a timeout must not make a second product ------
+# The store refuses a SKU that is taken, also when two requests arrive at once (checked against a
+# real WooCommerce: eight at once made one product). So the SKU is made from the name.
+
+async def sku_sent_for(store, name: str) -> str:
+    store.status, store.body = 201, PRODUCT
+    await call("create_product", name=name, regular_price=19)
+    return json.loads(store.requests[-1].content)["sku"]
+
+
+async def test_the_same_name_always_gets_the_same_sku_however_it_is_typed(store):
+    assert await sku_sent_for(store, "Blue Mug") == await sku_sent_for(store, "  blue   MUG ")
+
+
+async def test_a_different_name_gets_a_different_sku(store):
+    assert await sku_sent_for(store, "Blue Mug") != await sku_sent_for(store, "Red Mug")
+
+
+async def test_a_repeated_create_reports_the_product_that_is_already_there(store):
+    store.status = 400  # WooCommerce's own answer, word for word
+    store.body = {"code": "product_invalid_sku", "message": "Invalid or duplicated SKU.", "data": {"status": 400, "resource_id": 12, "unique_sku": "mcp-x-1"}}
+    with pytest.raises(ToolError, match=r"already exists \(id 12\)") as caught:
+        await call("create_product", name="Blue Mug", regular_price=19)
+    assert not isinstance(caught.value, UnexpectedToolError)
+
+
+@pytest.mark.parametrize("message", [
+    "The product with SKU (mcp-0123456789abcdef) you are trying to insert is already present in the lookup table",
+    # A store in another language words it differently; only the SKU itself is the same.
+    "Le produit avec l'UGS (mcp-0123456789abcdef) que vous essayez d'insérer est déjà présent dans la table",
+])
+async def test_a_name_held_by_a_product_in_the_trash_is_explained_without_talk_of_skus(store, message):
+    store.status, store.body = 400, {"code": "woocommerce_rest_product_not_created", "message": message, "data": {"status": 400}}
+    with pytest.raises(ToolError, match="trash") as caught:
+        await call("create_product", name="Blue Mug", regular_price=19)
+    assert "mcp-" not in str(caught.value)
+
+
+async def test_a_create_that_failed_for_another_reason_keeps_woocommerces_own_words(store):
+    # The same code covers every failed create; only one that names a SKU of ours is about the name.
+    store.status, store.body = 400, {"code": "woocommerce_rest_product_not_created", "message": "Invalid product type.", "data": {"status": 400}}
+    with pytest.raises(ToolError, match="Invalid product type"):
+        await call("create_product", name="Blue Mug", regular_price=19)
+
+
+async def test_renaming_a_product_made_here_moves_its_sku_to_the_new_name(store):
+    store.body = {**PRODUCT, "sku": "mcp-0123456789abcdef"}
+    await call("update_product", product_id=12, name="Red Mug")
+    looked, changed = store.requests
+    assert (looked.method, changed.method) == ("GET", "PUT") and looked.url.path == changed.url.path == "/wp-json/wc/v3/products/12"
+    assert json.loads(changed.content) == {"name": "Red Mug", "sku": await sku_sent_for(store, "Red Mug")}
+
+
+@pytest.mark.parametrize("theirs", ["MUG-BLUE-01", "mcp-cable-01", ""])  # the second only starts like one of ours
+async def test_renaming_leaves_a_sku_the_merchant_chose_alone(store, theirs):
+    store.body = {**PRODUCT, "sku": theirs}
+    await call("update_product", product_id=12, name="Red Mug")
+    assert json.loads(store.requests[-1].content) == {"name": "Red Mug"}
+
+
+# ---- lists: one page, and how many there are in all ------------------------------------
+
+@pytest.mark.parametrize(("tool", "item"), [("list_orders", ORDER), ("list_products", PRODUCT)])
+async def test_a_list_says_how_many_match_in_all_not_only_on_this_page(store, tool, item):
+    # Otherwise a model asked "how many orders today?" answers with the size of one page.
+    store.body, store.headers = [item], {"X-WP-Total": "37"}
+    assert (await call(tool, per_page=1))["total"] == 37
+
+
+async def test_a_list_without_the_stores_count_still_comes_back(store):
+    store.body = [ORDER]
+    listed = await call("list_orders")
+    assert listed["total"] is None and len(listed["orders"]) == 1
 
 
 # ---- when the store says no, or says nothing ------------------------------------------

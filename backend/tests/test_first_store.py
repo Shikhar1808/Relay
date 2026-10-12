@@ -2,14 +2,17 @@
 (app/services/bootstrap.py), and the one rule for a store's subdomain (app/services/stores.py).
 """
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.api.routes import auth
 from app.core.config import settings
 from app.core.crypto import decrypt
-from app.db.models import AdminEvent, Store, StoreStatus, UpstreamServer
+from app.db.models import AdminEvent, Role, Store, StoreStatus, UpstreamServer
+from app.schemas.auth import UserOut
 from app.services import bootstrap
 from app.services.stores import check_subdomain
 
@@ -17,6 +20,7 @@ pytestmark = pytest.mark.anyio
 
 ADMIN = SimpleNamespace(id=uuid.UUID("11111111-1111-1111-1111-111111111111"), email="admin@example.com")
 TOKEN = "t" * 48
+REQUEST = SimpleNamespace(client=SimpleNamespace(host="203.0.113.7"))  # the admin's signup, as record() reads it
 
 
 class FakeDb:
@@ -87,6 +91,13 @@ async def test_creating_the_first_store_is_recorded_like_any_other_store_change(
     assert event.client_ip is None and event.detail == {"name": "Demo Store", "by": "startup"}
 
 
+async def test_a_store_registered_by_the_admins_signup_says_so_and_keeps_where_it_came_from():
+    db = FakeDb(None)
+    await bootstrap.create_first_store_if_absent(db, ADMIN, REQUEST)
+    (event,) = added(db, AdminEvent)
+    assert event.client_ip == "203.0.113.7" and event.detail == {"name": "Demo Store", "by": "signup"}
+
+
 async def test_a_store_that_is_already_there_is_left_alone():
     db = FakeDb(uuid.uuid4())
     assert await bootstrap.create_first_store_if_absent(db, ADMIN) is None
@@ -136,6 +147,44 @@ async def test_at_startup_nothing_is_registered_until_an_admin_exists(monkeypatc
     monkeypatch.setattr(bootstrap, "AsyncSessionLocal", lambda: db)
     await bootstrap.bootstrap_first_store()
     assert db.added == []
+
+
+# ---- POST /auth/admin/signup, which registers the store when startup had no admin to do it with ----
+
+ROW = {
+    "id": ADMIN.id, "email": "admin@example.com", "name": "Admin", "role": Role.admin, "is_active": True,
+    "created_at": datetime(2026, 10, 12, tzinfo=timezone.utc),
+}
+
+
+async def signup(monkeypatch, store_step):
+    async def created(db, email, name, password):
+        return SimpleNamespace(**ROW)
+
+    monkeypatch.setattr(auth, "create_admin_if_absent", created)
+    monkeypatch.setattr(auth, "create_first_store_if_absent", store_step)
+    body = SimpleNamespace(email=ROW["email"], name="Admin", password="a-good-password")
+    return await auth.admin_signup(body, REQUEST, FakeDb())
+
+
+async def test_the_signup_passes_on_who_asked_so_the_store_is_recorded_as_its_doing(monkeypatch):
+    asked = []
+
+    async def store_step(db, admin, request=None):
+        asked.append(request)
+
+    await signup(monkeypatch, store_step)
+    assert asked == [REQUEST]
+
+
+async def test_the_signup_still_answers_when_the_store_was_already_registered_by_someone_else(monkeypatch):
+    async def store_step(db, admin, request=None):
+        # Losing that race rolls back, and a rollback leaves every row unread: reading it again
+        # needs a query, which an async session cannot make while the answer is being written.
+        vars(admin).clear()
+
+    answer = await signup(monkeypatch, store_step)
+    assert UserOut.model_validate(answer).email == ROW["email"]
 
 
 # ---- the subdomain rule -----------------------------------------------------------------

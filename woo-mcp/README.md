@@ -21,8 +21,8 @@ as `woo-<subdomain>`, so its tools read `woo-<subdomain>__list_orders`.
 |---|---|---|
 | `list_products` | `GET products` | `search`, `status`, `page`, `per_page` (20, at most 100) |
 | `get_product` | `GET products/{id}` | also returns the description |
-| `create_product` | `POST products` | a simple product, published unless `status` is `draft` |
-| `update_product` | `PUT products/{id}` | only the fields given are changed |
+| `create_product` | `POST products` | a simple product, published unless `status` is `draft`; a name already taken is refused |
+| `update_product` | `PUT products/{id}` | only the fields given are changed; a new name already taken is refused |
 | `list_orders` | `GET orders` | `status`, `after`, `before`, `page`, `per_page` |
 | `get_order` | `GET orders/{id}` | |
 | `update_order_status` | `PUT orders/{id}` | one of WooCommerce's seven statuses |
@@ -31,6 +31,17 @@ as `woo-<subdomain>`, so its tools read `woo-<subdomain>__list_orders`.
   objects: enough to answer with, small enough for a model's context, and no
   more customer data than a question needs (name and email, no address, phone
   or IP). Product links are left out: see "Talking to the store".
+- **No duplicate products.** An agent that gets no answer in time may ask
+  again, and the first request may have gone through. WooCommerce's REST API
+  has no transactions and no idempotency keys, but it refuses a second product
+  with a SKU that is taken, also when two requests arrive at once (eight
+  simultaneous creates made one product). So `create_product` sends a SKU made
+  from the name (`mcp-` and a hash): the repeat is refused with the id of the
+  product that is already there. Renaming moves that SKU with the name; a SKU
+  the merchant chose is never changed. The other write tools are safe to
+  repeat as they are: they set a value, they do not add anything.
+- **Lists** return one page and `total`, how many match in all (WooCommerce's
+  `X-WP-Total`), so a caller knows when to ask for the next `page`.
 - **Dates** are in the store's time zone. For `after` and `before` a date
   (`2026-10-12`) means that whole day; a date-time is passed on as given. For
   "today's orders", pass today's date as both.
@@ -94,13 +105,25 @@ shown once.
 
 `docker-compose.yml` runs the first store: `mysql`, `wordpress` (storefront and
 wp-admin on http://localhost:8081) and the one-shot `wp-init`, which runs
-`deploy/wp-init.sh` on WordPress's volume. The script is safe to run again. It:
+`deploy/wp-init.sh` on WordPress's volume. The script runs on every start and
+is safe to run again.
 
-- installs WordPress and the latest WooCommerce (not pinned);
+On every run, from `.env`:
+
+- installs WordPress and WooCommerce 11.2.1 if they are missing (pinned,
+  because the script writes the key pair straight into WooCommerce's own table);
+- sets the wp-admin password to `WP_ADMIN_PASSWORD` if it differs, so the
+  password is changed in `.env`, not in wp-admin;
+- puts pretty permalinks back if they were set to "Plain", because `/wp-json/`
+  needs them;
+- creates the `mcp` user and registers the key pair for it.
+
+Once, and from then on left to the store's admin, so a change made in wp-admin
+survives a restart:
+
 - turns off the "coming soon" page and the setup wizard, and sets the time zone;
 - disables shipping, so checkout needs no shipping zone;
-- creates the shop pages, enables cash on delivery, adds one sample product;
-- creates the `mcp` user and registers the key pair for it.
+- creates the shop pages, enables cash on delivery, adds one sample product.
 
 The backend registers the store and this server on startup
 (`backend/app/services/bootstrap.py`): a store with the slug
@@ -139,11 +162,13 @@ tests/
 
 ## Known limits
 
+- The no-duplicate rule holds among products made by `create_product`. A
+  product made in wp-admin without a SKU does not hold its name, and one in
+  the trash holds its name until it is deleted for good.
 - Changing `WOO_MCP_TOKEN` or the server's address after the first start does
   not update the registered upstream: the backend never touches a store that
   already exists. Edit the server in the dashboard, or with
   `PATCH /upstream-servers/{id}`.
-- `list_*` return one page and do not say how many pages there are.
 - Tools carry no read-only or destructive hints yet; they come with the chat
   agent's confirmation step for write tools.
 - There is no automated end-to-end test with a real WordPress yet.
