@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_admin, user_rate_limit
+from app.core.deps import common_rate_limit, require_admin
 from app.db.models import AdminEvent, User
 from app.db.session import get_db
 from app.schemas.audit import AuditEventOut, ChainCheckOut
@@ -26,7 +26,7 @@ from app.services.gateway_audit import read_events, verify_chain
 router = APIRouter(
     prefix="/audit-log",
     tags=["audit-log"],
-    dependencies=[Depends(require_admin), Depends(user_rate_limit(capacity=60, refill_per_minute=60))],
+    dependencies=[Depends(require_admin), Depends(common_rate_limit)],
 )
 
 _Word = Annotated[str | None, Query(pattern=r"^[A-Za-z_]{1,30}$")]

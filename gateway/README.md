@@ -84,6 +84,13 @@ Each row has the time, user, upstream, tool, duration, caller's address and a
 
 Texts are cut at 2000 characters. `tools/list` is not recorded.
 
+A call made by the dashboard's chat agent also carries `chat_id` (the chat)
+and `chat_turn` (the message in it that led to the call), from the
+`X-Chat-Id` and `X-Chat-Turn` headers the backend sends. They are kept only
+when the caller's token is a chat token and each is a well-formed UUID: an
+API-key caller cannot plant them. A client such as Claude Code has no such
+ids; its conversation never reaches the gateway.
+
 **Append-only.** The gateway's role can INSERT and SELECT, nothing else. A
 trigger refuses UPDATE, DELETE and TRUNCATE for every role, the owner included.
 

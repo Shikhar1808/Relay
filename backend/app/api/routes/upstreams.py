@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import encrypt
-from app.core.deps import get_redis, require_admin, user_rate_limit
+from app.core.deps import common_rate_limit, get_redis, require_admin
 from app.db.models import Store, UpstreamServer, User
 from app.db.session import get_db
 from app.schemas.upstreams import CreateUpstreamRequest, UpdateUpstreamRequest, UpstreamOut
@@ -30,7 +30,7 @@ UPSTREAMS_CHANGED = "upstreams:changed"
 router = APIRouter(
     prefix="/upstream-servers",
     tags=["upstream-servers"],
-    dependencies=[Depends(require_admin), Depends(user_rate_limit(capacity=60, refill_per_minute=60))],
+    dependencies=[Depends(require_admin), Depends(common_rate_limit)],
 )
 
 

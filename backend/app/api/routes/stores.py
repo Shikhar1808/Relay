@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_admin, user_rate_limit
+from app.core.deps import common_rate_limit, get_current_user, require_admin
 from app.db.models import Role, Store, StoreMember, StoreStatus, User
 from app.db.session import get_db
 from app.schemas.auth import UserOut
@@ -21,7 +21,7 @@ from app.services.stores import stores_for_user, unique_slug
 router = APIRouter(
     prefix="/stores",
     tags=["stores"],
-    dependencies=[Depends(get_current_user), Depends(user_rate_limit(capacity=60, refill_per_minute=60))],
+    dependencies=[Depends(get_current_user), Depends(common_rate_limit)],
 )
 
 

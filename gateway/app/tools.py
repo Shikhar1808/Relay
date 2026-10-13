@@ -20,7 +20,7 @@ from mcp.server.auth.provider import AccessToken
 
 from app import limits
 from app import upstream as upstream_client
-from app.audit import ERROR, INFO, WARNING, audit, describe_call
+from app.audit import ERROR, INFO, WARNING, audit, chat_ref, describe_call
 from app.catalog import catalog
 from app.config import settings
 from app.registry import Upstream
@@ -112,6 +112,8 @@ async def call_tool(ctx: ServerRequestContext[Any], params: types.CallToolReques
         tool=(tool if known else params.name)[:200],
         duration_ms=round((time.monotonic() - started) * 1000),
         token_type=caller.claims["token_type"],
+        # Only the backend's chat agent can vouch for a conversation; with an API key these headers mean nothing.
+        **(chat_ref.get() if caller.claims["token_type"] == "chat_token" else {}),
         **describe_call(params.arguments or {}, outcome, getattr(result.content[0], "text", None) if result.content else None),
     )
     return result

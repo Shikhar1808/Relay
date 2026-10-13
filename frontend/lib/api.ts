@@ -34,7 +34,35 @@ export type ApiKeyCreated = { id: string; raw_key: string; prefix: string; name:
 export type MemberCreated = { user: User; temporary_password: string };
 /** What sign in answers. It also carries the token itself, for scripts; the dashboard never touches it. */
 export type TokenResponse = { user: User };
-export type ChatReply = { reply: string; chat_token_expires_at: string; store_ids: string[] };
+
+/** One piece of the chat's results panel. `kind` says which of the optional fields are there. */
+export type ChatBlock = {
+  kind: "table" | "card" | "notice" | "raw";
+  title: string;
+  source: string; // which server and tool the data came from
+  call_id: string;
+  columns?: string[];
+  rows?: (string | number)[][];
+  fields?: [string, string | number][];
+  tone?: "info" | "success" | "warning" | "error";
+  text?: string;
+};
+/** A change the agent wants to make, waiting for a yes or no. */
+export type ChatPending = { call_id: string; server: string; tool: string; summary: string };
+/** What the agent has to show for its last answer: `reply` for the chat, `blocks` and `steps` for the results panel. */
+export type ChatResult = {
+  reply: string;
+  status: "answered" | "needs_confirmation" | "stopped" | "failed";
+  blocks: ChatBlock[];
+  steps: string[];
+  pending: ChatPending[];
+};
+/** The answer to one message. `conversation_id` changes when the earlier chat had ended and a new one was opened. */
+export type ChatReply = ChatResult & { conversation_id: string; store_ids: string[] };
+export type ChatLine = { from: "you" | "agent"; text: string };
+/** A whole chat: the open one after a reload (`conversation_id` null when none is open), or an earlier one. */
+export type Chat = ChatResult & { conversation_id: string | null; messages: ChatLine[] };
+export type ChatSummary = { conversation_id: string; title: string; last_used_at: string };
 
 /** One audit row: from the gateway's log, or (category "platform") a team, key or store change. */
 export type AuditEvent = {

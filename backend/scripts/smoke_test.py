@@ -576,19 +576,44 @@ def main() -> int:
         assert r.status_code == 400, r.text
         _ok("an expired link is rejected")
 
-    _step("chat message mints a short_chat_token server-side")
+    # The agent's answer depends on the model (and is "not set up" without a key), so only
+    # the shape of the reply and the rules around the chat are checked here.
+    _step("a chat stays open: one conversation, one chat token, never shown to the caller")
     r = client.post("/chat/message", json={"message": "what orders came in today?"}, headers=member_headers)
     assert r.status_code == 200, r.text
     reply = r.json()
-    assert reply["reply"]
+    assert reply["reply"] and reply["status"] in ("answered", "needs_confirmation", "stopped", "failed"), reply
     assert reply["store_ids"] == [second_store_id], reply
-    first_expiry = reply["chat_token_expires_at"]
-    _ok("chat reply received, token expiry present, raw token never exposed")
+    assert isinstance(reply["blocks"], list) and isinstance(reply["steps"], list) and "chat_" not in r.text, r.text
+    conversation_id = reply["conversation_id"]
+    _ok("chat reply received with its results; the raw token is not in it")
 
     r = client.post("/chat/message", json={"message": "a follow-up question"}, headers=member_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["chat_token_expires_at"] == first_expiry, "expected the SAME token to be reused"
-    _ok("second chat message reuses the same session token (one session at a time)")
+    assert r.status_code == 200 and r.json()["conversation_id"] == conversation_id, r.text
+    r = client.get("/chat", headers=member_headers)
+    assert r.status_code == 200 and r.json()["conversation_id"] == conversation_id, r.text
+    assert [line["from"] for line in r.json()["messages"]][-4:] == ["you", "agent", "you", "agent"], r.text
+    live = _psql(repo_root, f"SELECT count(*), bool_and(ciphertext IS NOT NULL) FROM chat_tokens WHERE user_id = '{member_id}' AND NOT revoked").strip()
+    assert live == "1|t", live
+    _ok("a second message continues the same chat on the same token, and a reload gets the whole chat back")
+
+    _step("ending a chat revokes its token; the chat can then be read, by its owner only, and not continued")
+    r = client.post("/chat/end", headers=member_headers)
+    assert r.status_code == 204, r.text
+    assert _psql(repo_root, f"SELECT count(*) FROM chat_tokens WHERE user_id = '{member_id}' AND NOT revoked").strip() == "0"
+    r = client.get("/chat", headers=member_headers)
+    assert r.status_code == 200 and r.json()["conversation_id"] is None and r.json()["messages"] == [], r.text
+    r = client.get("/chat/history", headers=member_headers)
+    assert r.status_code == 200 and conversation_id in [chat["conversation_id"] for chat in r.json()], r.text
+    r = client.get(f"/chat/history/{conversation_id}", headers=member_headers)
+    assert r.status_code == 200 and r.json()["messages"] and r.json()["pending"] == [], r.text
+    r = client.get(f"/chat/history/{conversation_id}", headers=admin_headers)
+    assert r.status_code == 404, r.text
+    r = client.post("/chat/confirm", json={"approve": True}, headers=member_headers)
+    assert r.status_code == 409, r.text
+    r = client.post("/chat/message", json={"message": "a new chat"}, headers=member_headers)
+    assert r.status_code == 200 and r.json()["conversation_id"] != conversation_id, r.text
+    _ok("ended chat: token revoked, listed and readable for its owner, 404 for anyone else; the next message opens a new one")
 
     _step("chat has its own rate limit bucket, apart from the dashboard's")
     for _ in range(12):  # chat allows a burst of 10 per minute

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     admin_email: str | None = None
     admin_password: str | None = None
 
+    # A chat ends when it has been idle this long: every message pushes its token's expiry out again.
     chat_token_ttl_minutes: int = 30
 
     # AES-256-GCM key for upstream MCP server credentials (app/core/crypto.py):
@@ -64,7 +65,20 @@ class Settings(BaseSettings):
     woo_mcp_url: str | None = None
     woo_mcp_token: str | None = None
 
-    @field_validator("admin_email", "admin_password", "smtp_password", "woo_mcp_url", "woo_mcp_token", mode="before")
+    # The chat agent (app/agent). The model is reached in the OpenAI chat format, so the
+    # address can be a provider or an LLM gateway in front of several. With no key the
+    # chat says it is not set up and everything else works.
+    llm_base_url: str = "https://api.groq.com/openai/v1"
+    llm_api_key: str | None = None
+    llm_model: str = "openai/gpt-oss-20b"
+    # The gateway's MCP endpoint as this backend reaches it: the agent calls tools there like any MCP client.
+    gateway_mcp_url: str = "http://gateway:8080/mcp"
+    # "Today" in the agent's prompt is the store's day (the store is set up with the same zone).
+    store_timezone: str = "Asia/Kolkata"
+    # A chat not used for this long is deleted, with everything said in it.
+    chat_retention_days: int = 1
+
+    @field_validator("admin_email", "admin_password", "smtp_password", "woo_mcp_url", "woo_mcp_token", "llm_api_key", mode="before")
     @classmethod
     def _blank_env_means_unset(cls, value: str | None) -> str | None:
         # docker-compose's ${VAR:-} substitutes "" (present-but-blank) when

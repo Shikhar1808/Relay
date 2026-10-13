@@ -3,6 +3,7 @@ import pytest
 from mcp import types
 
 from app import tools
+from app.audit import chat_ref
 from app.catalog import Snapshot, catalog
 from tests.conftest import make_caller, make_tool, make_upstream
 
@@ -207,6 +208,29 @@ async def test_a_successful_call_is_recorded_with_who_what_and_how_long(monkeypa
     assert (event["user_id"], event["upstream"], event["tool"], event["token_type"]) == ("user-1", "store-a", "list_orders", "api_key")
     assert isinstance(event["duration_ms"], int) and len(event["args_hash"]) == 64
     assert "sk-123" not in event["arguments"] and "processing" in event["arguments"]
+
+
+@pytest.fixture
+def chat_headers():
+    """What app/guard.py notes when a request carries the chat's ids."""
+    ids = {"chat_id": "7d1e0c7e-52c1-4c53-9a43-0d6f1f3a8b11", "chat_turn": "b83a4a0e-3f0b-4f8e-8f43-6a1f0c2d9e22"}
+    noted = chat_ref.set(ids)
+    yield ids
+    chat_ref.reset(noted)
+
+
+async def test_a_call_from_the_chat_agent_is_recorded_with_its_chat_and_message(monkeypatch, upstream_calls, audit_events, chat_headers):
+    monkeypatch.setattr(tools, "get_access_token", lambda: make_caller(["A"], token_type="chat_token"))
+    await call("store-a__list_orders")
+    (event,) = audit_events
+    assert (event["token_type"], event["chat_id"], event["chat_turn"]) == ("chat_token", chat_headers["chat_id"], chat_headers["chat_turn"])
+
+
+async def test_an_api_key_caller_cannot_plant_chat_ids_in_the_log(monkeypatch, upstream_calls, audit_events, chat_headers):
+    as_caller(monkeypatch, ["A"])  # an API key: only the backend's chat agent can vouch for a conversation
+    await call("store-a__list_orders")
+    (event,) = audit_events
+    assert event["token_type"] == "api_key" and "chat_id" not in event and "chat_turn" not in event
 
 
 async def test_a_refused_call_is_a_warning_and_the_log_tells_the_two_refusals_apart(monkeypatch, upstream_calls, audit_events):

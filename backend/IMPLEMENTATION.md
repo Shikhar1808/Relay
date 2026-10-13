@@ -19,8 +19,9 @@ A FastAPI + PostgreSQL + Redis backend covering:
 - Store creation — **stub only**, returns a fake URL (see "What's a stub" below)
 - Assigning members to one or more stores, with chat and the gateway
   token-resolve scoped to those stores
-- A demo chat agent that mints short-lived chat tokens server-side (one
-  session reused per user, not one per message)
+- A chat agent (LangGraph) that answers by calling tools through the MCP
+  Gateway as the signed-in user, on one chat token per chat that never
+  leaves the server (see "The chat agent")
 - An internal token-resolve endpoint the MCP Gateway (`gateway/`) calls on
   every request, guarded by a shared service token
 - The registry of upstream MCP servers the gateway forwards to, with
@@ -62,8 +63,8 @@ There are exactly two roles, and exactly one admin account can ever exist.
 - Deactivate the admin account
 
 **Member can:**
-- Log in, use the chat agent (one session token, reused across messages —
-  see "known race" below for the one edge case)
+- Log in, use the chat agent: one open chat at a time, earlier chats to
+  read (see "The chat agent")
 - See only the stores they're assigned to — in the dashboard, in chat,
   and through any MCP client (see "Stores and members")
 - Issue, list, and revoke **their own** gateway API key — never anyone
@@ -122,10 +123,8 @@ a tool argument, a header, or anything the LLM wrote. An upstream with a
 with no `store_id` is shared. Tool names are `slug__tool`, so a member in
 several stores can tell which store a tool acts on.
 
-**What is NOT enforced yet, because it does not exist yet:**
-
-- The real chat agent. `_demo_agent_reply` is a stub. The real one must put
-  only those stores' data into the LLM prompt and tool results.
+The chat agent adds nothing to this rule and cannot get around it: it has no
+access to a store except through the gateway, with the user's chat token.
 
 ## Database migrations
 
@@ -217,10 +216,13 @@ most common mistake when reading the code, so here's the map:
 |---|---|---|---|
 | Dashboard session JWT | `/auth/login` | Browser → this API (dashboard, team mgmt, chat). The browser holds it as a cookie page scripts cannot read (`HttpOnly`, `SameSite=Strict`); scripts and tests send it as a `Bearer` header | `app/core/security.py: create_access_token`; `app/core/deps.py: session_token` |
 | Gateway API key (`umk_...`) | Admin (for a member) via `/team/members/{id}/api-keys`, or a member for themself via `/team/me/api-keys` | A member's MCP client (Claude Code, Cursor) → the future Gateway | `app/db/models/api_key.py: ApiKey` (hash only) |
-| Short chat token (`chat_...`) | This backend, automatically, on `/chat/message` | This backend → the future Gateway, on behalf of a chat session | `app/db/models/tokens.py: ChatToken` (hash only) + Redis |
+| Short chat token (`chat_...`) | This backend, automatically, when a chat opens | This backend's chat agent → the Gateway, as the signed-in user, for the life of one chat | `app/db/models/tokens.py: ChatToken` (the hash, and the token itself encrypted) + Redis |
 
-The gateway API key and chat token are **never** returned to the browser
-after their one-time creation response — only their SHA-256 hash is stored.
+The gateway API key is shown once, when it is created, and only its SHA-256
+hash is stored. The chat token is never shown to anyone. Its hash is stored
+for the same lookup, and beside it the token itself, encrypted with AES-256-GCM
+(`app/core/crypto.py`, the key that protects upstream credentials): the agent
+has to present it to the gateway again on every message of the chat.
 `/internal/auth/resolve` is how a trusted internal caller (the future
 gateway) turns either one into a user identity.
 
@@ -244,6 +246,7 @@ backend/
         api_key.py           ApiKey
         store.py             Store, StoreMember, StoreStatus
         tokens.py            AuthToken, TokenPurpose, ChatToken
+        conversation.py      Conversation (one chat with the agent; what was said is LangGraph's saved state)
         upstream.py          UpstreamServer (an MCP server the gateway forwards to)
         admin_event.py       AdminEvent (who changed what in the team, keys and stores; append-only)
     schemas/             Pydantic request/response models, one file per route file
@@ -257,12 +260,18 @@ backend/
       stores.py            Store slug generation; stores_for_user (the scoping rule)
       gateway_audit.py     Writes to and reads from the gateway's audit log (its private port)
       admin_audit.py       Adds an admin_events row to the caller's transaction
+      conversations.py     The open chat and its token, ending it, earlier chats, deleting old ones
+    agent/               The chat agent (LangGraph); see "The chat agent"
+      state.py             What is saved between steps, and what is handed in per request and never saved
+      nodes.py             The seven steps and the two decisions between them; build_blocks (results in plain words)
+      graph.py             Wires the steps; run() and read() are what the API uses; the Postgres saver
+      gateway.py           The two calls to the MCP gateway (tools/list, tools/call)
     api/
       routes/
         auth.py            Login, admin signup, /auth/me, change/forgot/set password
         team.py            Member CRUD + admin and self-service API key routes
         stores.py          Store create (stub) + member assignment
-        chat.py            Demo chat agent + chat token minting
+        chat.py            The chat: message, confirm, the open chat, end, earlier chats
         upstreams.py       Upstream MCP server registry (admin only); tells the gateway on change
         audit.py           GET /audit-log, /audit-log/platform, /audit-log/verify: the audit log, for the dashboard (admin only)
         internal.py        POST /internal/auth/resolve (service token required)
@@ -305,7 +314,12 @@ backend/
 | POST | `/stores/{id}/members` | JWT (admin) | user, 60/min | Assigns a member to a store; 409 if they already belong to one, 400 for the admin |
 | DELETE | `/stores/{id}/members/{user_id}` | JWT (admin) | user, 60/min | Removes a member from a store, effective immediately |
 | GET | `/stores/{id}/members` | JWT (admin) | user, 60/min | Lists a store's assigned members |
-| POST | `/chat/message` | JWT | user, 10/min | Demo agent reply scoped to the caller's store; mints/reuses a short_chat_token; 403 for a member with no store |
+| POST | `/chat/message` | JWT | user, 60/min and 10/min | Says something to the agent; opens a chat if none is open. Answers, once the agent is done, with the reply, its results and any change waiting for a yes or no. 403 for a member with no store |
+| POST | `/chat/confirm` | JWT | user, 60/min and 10/min | `{approve}`: yes or no to the changes the agent is waiting to make. 409 when nothing is waiting |
+| GET | `/chat` | JWT | user, 60/min | The open chat, for a page reload: what was said and the last answer's results. `conversation_id` is null when none is open |
+| POST | `/chat/end` | JWT | user, 60/min | Ends the open chat by revoking its token. 204 |
+| GET | `/chat/history` | JWT | user, 60/min | The caller's own earlier chats, newest first |
+| GET | `/chat/history/{id}` | JWT | user, 60/min | One of them, to read. 404 for an unknown id and for someone else's chat alike |
 | GET | `/upstream-servers` | JWT (admin) | user, 60/min | Lists registered MCP servers; `has_credential` only, never the credential |
 | POST | `/upstream-servers` | JWT (admin) | user, 60/min | Registers a server; 409 on a duplicate slug, 404 for an unknown store |
 | PATCH | `/upstream-servers/{id}` | JWT (admin) | user, 60/min | Changes only the fields sent (disable with `enabled: false`; `credential: ""` removes it). The slug is fixed |
@@ -337,9 +351,11 @@ Buckets in use:
   failed attempts since the dependency runs before the route body).
   `forgot-password` is limited per IP only, not per target address, so one
   client can still send a victim up to 5 reset emails a minute.
-- General authenticated routes: 60 capacity, refills 60/min, keyed by user id
-- Chat message: 10 capacity, refills 10/min, keyed by user id (stricter —
-  this is the route that will eventually cost an LLM call)
+- Every signed-in route: 60 capacity, refills 60/min, keyed by user id. It is one
+  limiter, `common_rate_limit` in `app/core/deps.py`, so the 60 are shared
+  across the whole API
+- Chat message and confirm, on top of that: 10 capacity, refills 10/min, keyed
+  by user id (stricter: each one costs model calls)
 
 A `429` response includes a `Retry-After` header computed from how many
 tokens are missing and the refill rate.
@@ -368,15 +384,72 @@ turns into a clean `409` instead of a `500`:
   `_assert_no_active_key` — two concurrent issue requests for the same user
   cannot both succeed even if both pass the pre-check.
 
-**One exception, left as a documented shortcut:** the chat token's "one
-session at a time" (`chat.py: _get_or_create_chat_token`) is check-then-
-insert with no DB constraint behind it. A partial unique index doesn't fit
-cleanly here because reuse depends on `expires_at` (a moving target), not
-just `revoked` — a naive index would block minting a replacement once the
-old token expires. Two `/chat/message` calls from the same user in the same
-instant could each mint a token; both are valid and belong to that same
-user, so there's no security impact, just a brief window where "exactly
-one" isn't exactly true. Upgrade this only if the demo needs it to be exact.
+**One exception, left as a documented shortcut:** "one open chat at a time"
+(`app/services/conversations.py: open_chat`) is check-then-insert with no DB
+constraint behind it. A partial unique index doesn't fit cleanly here because
+a chat is open while its token's `expires_at` (a moving target) is ahead, not
+just while it is not `revoked`. Two first messages from the same user in the
+same instant could each open a chat; both belong to that same user, so
+there's no security impact, and the newer one is the one found afterwards.
+Upgrade this only if the demo needs it to be exact.
+
+## The chat agent
+
+`app/agent/` is a LangGraph graph. The model only ever says which tool it
+wants; every call is made by this backend, through the MCP gateway, with the
+signed-in user's chat token. That is what makes a chat's tool calls show up in
+the audit log under that user, and why the agent can reach nothing the user
+could not reach with their own API key.
+
+```
+            +-------------------------------------------+
+            v                                           | results
+START -> call_model -> check_calls -> run_tools --------+
+            |               |             ^
+            |               +-> confirm --+   (waits here for the user)
+            |
+            +-> finish -+
+            +-> stop ---+-> present -> END
+```
+
+| Step | Does |
+|---|---|
+| `call_model` | Sends the model the conversation, the tools the gateway lists for this user right now, today's date in the store's time zone and the servers' names |
+| `check_calls` | Sorts what the model asked for into reads and writes, by the tools' hints. A tool with no hints counts as a write |
+| `confirm` | Waits for the user's yes or no to the writes (`POST /chat/confirm`) |
+| `run_tools` | Runs the reads and the approved writes together; one failing does not stop the others |
+| `finish` / `stop` | The model's answer, or the end of a run that used up its steps (`RECURSION_LIMIT`) |
+| `present` | Turns the turn's tool results into tables, cards and notices, each naming the tool it came from, chosen by the shape of the result and not by the tool's name. Once earlier answers have used tools too, it adds one table of every tool the chat has used, so "which tools did you use?" is answered from the record |
+
+- **A chat is open while its chat token is live.** A user has one open chat.
+  Each message pushes the token's expiry out by `CHAT_TOKEN_TTL_MINUTES`; the
+  chat ends when the member ends it, signs out, or leaves it idle that long.
+  An ended chat can be read, not continued.
+- **The model is reminded of earlier turns as text only:** the last six
+  questions with their answers, without the tool requests and results behind
+  them (`nodes.py: _history`). Only the message being answered carries its
+  tool results. Resending old results on every call is what uses up a
+  provider's tokens-a-minute limit; the model looks again when it needs data.
+- **One reply per message, not a stream.** The page waits for the whole
+  answer. (A stream of tool calls and text was built and taken out again on
+  13 Oct.)
+- **What was said is saved by LangGraph** in Postgres, in its own schema
+  (`langgraph`), after every step. That is what lets a follow-up, a pause for
+  confirmation and a page reload work. A `conversations` row says whose chat
+  it is. The chat token, the tool list and the model are handed in per request
+  and never saved.
+- **Chats are deleted** `CHAT_RETENTION_DAYS` (default 1) after their last
+  use, with everything said in them: at startup and then once a day, so a
+  chat lives between one and two days
+  (`app/services/conversations.py: purge`).
+- **The model is three settings:** `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`,
+  in the OpenAI chat format. With no key the chat answers that it is not set
+  up. A provider error, an unreachable gateway and a run that never settles
+  each end in a plain reply with status `failed` or `stopped`, not in a 500.
+- **Each gateway call carries the chat's id and the message's id**
+  (`X-Chat-Id`, `X-Chat-Turn`); the gateway notes both in its audit log.
+- **Conversations hold what tools returned**, customer names and emails
+  included, in plain text for the retention period.
 
 ## What's a stub (and what replaces it later)
 
@@ -387,10 +460,10 @@ one" isn't exactly true. Upgrade this only if the demo needs it to be exact.
   version is a separate Create Store Service that drives `helm install` per
   store and updates this same `stores` table through a
   `pending → provisioning → ready/failed` state machine.
-- **Chat agent** returns a canned string. No LiteLLM call, no MCP Gateway
-  call happens. The token-minting and rate-limiting around it are real and
-  will not need to change when the real agent is wired in — only
-  `_demo_agent_reply` in `app/api/routes/chat.py` gets replaced.
+- **The chat reaches one model provider directly** (Groq by default; the
+  address, key and model are the `LLM_*` settings). There is no fallback
+  provider and no LLM gateway in front yet; putting one there is a change of
+  those settings.
 - **Email has no retry queue and no HTML templates** — see "Email and
   passwords".
 - **Changing a password does not end existing sessions.** There is no

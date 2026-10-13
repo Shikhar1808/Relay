@@ -2,7 +2,7 @@ import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from redis.asyncio import Redis
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -15,7 +15,7 @@ from app.core.deps import (
     revoked_session_key,
 )
 from app.core.security import create_access_token, hash_password, verify_password
-from app.db.models import AuthToken, ChatToken, TokenPurpose, User
+from app.db.models import AuthToken, TokenPurpose, User
 from app.db.session import AsyncSessionLocal, get_db
 from app.schemas.auth import (
     AdminSignupRequest,
@@ -29,6 +29,7 @@ from app.schemas.auth import (
 )
 from app.services.auth_tokens import consume_auth_token, issue_auth_token
 from app.services.bootstrap import create_admin_if_absent, create_first_store_if_absent
+from app.services.conversations import end_chat
 from app.services.mailer import notice_email, reset_email, send_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -101,18 +102,7 @@ async def logout(
     token, expires_at = request.state.session
     # Remembered only as long as the token could still have been used.
     await redis.set(revoked_session_key(token), 1, ex=max(1, int(expires_at - time.time())))
-
-    revoked = await db.execute(
-        update(ChatToken)
-        .where(ChatToken.user_id == user.id, ChatToken.revoked.is_(False))
-        .values(revoked=True)
-        .returning(ChatToken.token_hash)
-    )
-    hashes = revoked.scalars().all()
-    await db.commit()
-    if hashes:
-        # /internal/auth/resolve looks here first, so the cached copies must go too.
-        await redis.delete(*(f"chat_token:{token_hash}" for token_hash in hashes))
+    await end_chat(db, redis, user)
 
 
 @router.get("/session", response_model=SessionOut)

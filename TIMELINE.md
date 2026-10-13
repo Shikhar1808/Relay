@@ -5,7 +5,7 @@ and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on 
 
 - **Deadline:** 26 Oct 2026
 - **Last updated:** 13 Oct 2026
-- **Now:** the first store (WordPress, WooCommerce, MySQL) runs in compose with its own MCP server behind the gateway, checked end to end with a real checkout; next is the chat agent
+- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. Next: the Servers page, two more upstream servers, then Kubernetes
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -44,18 +44,19 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [x] The first store and its server registered at startup, like any later store: a store row with the subdomain `demo` and an upstream `woo-demo` that belongs to it
 - [x] **Checkpoint:** `list_products` through the gateway, with an audit entry (all seven tools as a member, a product created and seen on the storefront, a guest checkout with cash on delivery returned by `list_orders` for today, each call in the audit log under that member)
 
-## Oct 15: Chat agent, LiteLLM, dashboard shell
+## Oct 15: Chat agent, LLM gateway, dashboard shell
 
-- [ ] LiteLLM proxy with one provider
-- [x] Short chat token issued and stored in Redis and the database (inside `POST /chat/message`)
-- [ ] `/chat/message` calls the LLM with the gateway's tools (currently a stub reply)
-  - The WooCommerce tools already declare hints (read-only, overwrites, safe to repeat; 13 Oct). The hints are only declared for now: nothing acts on them until the chat agent's confirmation step for write tools is built (under Oct 24).
-- [ ] Streaming replies, and showing which tools were called
-- [ ] Chat page layout after `refernces/chatBotDesign.png`: the chat agent on the left, and on the right a panel that shows what the agent changed and its output (tool calls and their results), laid out to read well. Not started: today's agent is a stub with no output to show
+- [ ] LLM gateway in front of the model: Bifrost, chosen on 13 Oct over LiteLLM after measuring both (about a fifth of the memory). Until it is in, the chat reaches Groq directly; the model's address, key and name are settings (`LLM_BASE_URL`, `GROQ_API_KEY`, `LLM_MODEL`), so this is a change of settings
+- [x] Short chat token issued and stored in Redis and the database: one per chat, opened by `POST /chat/message`, kept encrypted so the agent can present it on every message
+- [x] `/chat/message` calls the LLM with the gateway's tools: a LangGraph graph in `backend/app/agent` (seven steps, its state saved in Postgres), which calls the gateway with the signed-in user's chat token, so each call is in the audit log under that user, with the chat's id and the message's id (13 Oct)
+  - The agent reads the hints the WooCommerce tools declare: a tool that does not say it only reads waits for the user's yes or no.
+- [x] Showing which tools were called: each answer comes with its tool calls and their results, and from the second answer on with every tool the chat has used
+- [ ] Streaming replies. Built on 13 Oct (tool calls and text as they happen) and taken out the same day at the user's request: a message is answered in one piece
+- [x] Chat page layout after `refernces/chatBotDesign.png`: the results on the left (each tool result as a table, a card or a notice, with the tool it came from, then the calls in words, and from the second answer on the list of every tool the chat has used), the chat on the right. Checked in headless Chrome at desktop and phone widths (13 Oct): a read, a write with its confirmation, a reload, ending the chat, reading an earlier one
 - [x] Dashboard shell: sign in, side navigation, Team, API key, Chat, Account, Stores pages
 - [ ] Dashboard: Servers page
 - [x] Dashboard: Audit log page (`/audit`, admin only; checked in a browser at desktop and phone widths)
-- [ ] **Checkpoint:** ask a question in chat, the agent calls a WooCommerce tool, the reply streams back
+- [x] **Checkpoint:** ask a question in chat, the agent calls a WooCommerce tool, the reply comes back (in one piece, see above; 13 Oct, with Groq's `openai/gpt-oss-20b`: "what orders came in today?", and a product created after a confirmation and seen on the storefront)
 
 ## Oct 16: Buffer and integration test
 
@@ -114,7 +115,7 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - [ ] Per-role tool permissions
 - [ ] Prompt injection check on tool descriptions
 - [ ] Audit log heatmap
-- [ ] Confirmation step for write tools in chat (reads the tool hints the WooCommerce tools already declare; until this is built nothing acts on them)
+- [x] Confirmation step for write tools in chat: a write waits for a yes or no, one question for all the writes in a reply; a tool with no hints counts as a write (13 Oct)
 
 ## Oct 25–26: Polish, docs, video
 
@@ -148,7 +149,9 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - The list tools also return `total`, how many match in all, so a full page is not taken for the whole answer
 - A repeated `create_product` cannot make a duplicate: the SKU is made from the name and the store itself refuses a second one, also when requests arrive at once (eight at once made one product); the repeat is refused with the id of the product already there
 - The store's install script sets the store's own settings once and then leaves them to its admin; what `.env` holds (the wp-admin password, the REST key) is applied on every start; WooCommerce is pinned to 11.2.1
-- Each WooCommerce tool says whether it reads, adds or overwrites (MCP tool annotations), and the gateway passes that on, ready for the chat's confirmation step for write tools
+- Each WooCommerce tool says whether it reads, adds or overwrites (MCP tool annotations), and the gateway passes that on; the chat's confirmation step acts on it
+- A chat is one conversation at a time: it stays open across reloads until the member ends it, signs out or leaves it idle for 30 minutes. Earlier chats can be read, not continued, and are deleted one to two days after their last use (`CHAT_RETENTION_DAYS` is 1; the clean-up runs once a day)
+- The gateway's audit log records which chat and which message a chat tool call belongs to; only for the chat agent's token, so an API-key caller cannot plant them
 - A first store registered by the admin's signup is recorded as the signup's doing, with the caller's address, and the signup answers normally when the store was already registered
 - Tests: `./run_tests.sh` runs the unit tests of the three services (pytest), `./run_tests.sh all` adds the two end-to-end tests (`backend/scripts/smoke_test.py`, `gateway/tests/integration_test.py` with mock upstreams)
 
@@ -212,19 +215,28 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 - **Export** to CSV or JSON, and **live updates**; today there is a Refresh button.
 - **Automated tests.** The frontend has none. The page was checked by hand in a headless browser, and its "the log was changed" message was never seen there, only the endpoint behind it.
 
+### The chat agent
+
+- **The confirmation trusts each server's own word.** A tool runs without asking when its server marks it "read only", and that mark is a hint the server sends about itself. A server an admin adds later could mark a tool that deletes things as read only. The cure is a "trusted" switch per server in the registry, with hints believed only from trusted servers. Say so in the threat model note.
+- **No second model to fall back on.** Groq's free tier allows 8,000 tokens a minute, and a busy minute ends in "the chat model is not available". Earlier turns are already sent as text only to keep requests small.
+- **No streaming and no stop button.** A long answer shows only the typing dots until it is whole. Behind an Ingress, a run longer than the proxy's timeout (often 60 seconds) would be cut.
+- **The frontend's check in headless Chrome was done by hand,** not kept as a test.
+- **What a tool returned** (customer names and emails included) is stored in plain text for as long as a chat is kept: one to two days.
+
 ### Tests and housekeeping
 
-- **A throwaway database for the end-to-end tests.** Each run leaves members, stores and audit rows in the dev database, and with `SMTP_PASSWORD` set it sends real emails to made-up addresses.
+- **A throwaway database for the end-to-end tests.** Each run leaves members, stores and audit rows in the dev database; with `SMTP_PASSWORD` set it sends real emails to made-up addresses, and with `GROQ_API_KEY` set its chat messages reach the model (`SMTP_PASSWORD= GROQ_API_KEY= ./run_tests.sh all` avoids both).
 - **Not tested:** several gateway replicas at once; Postgres going down while the gateway runs; the multi-store pages in a browser.
 - **No automated end-to-end test with a real WordPress.** The WooCommerce checkpoint was run once by script on 12 Oct and is not in `./run_tests.sh all`; only the store's registration is checked there. Add the scripted run with the chat step.
-- **A proper HTTP client in the backend.** It calls the gateway with the standard library in a worker thread; switch to `httpx` when the chat agent brings one in.
+- **A proper HTTP client for the audit calls.** `backend/app/services/gateway_audit.py` still calls the gateway's private port with the standard library in a worker thread. The chat agent brought an async client in (the MCP SDK's); move these calls onto it.
 
 ### Already marked in the code
 
 Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 
 - No filter on where an upstream URL may point (`backend/app/api/routes/upstreams.py`): only the admin can add one today.
-- Two chat messages sent in the same instant can each mint a chat token (`backend/app/api/routes/chat.py`).
+- Two first chat messages sent in the same instant can each open a chat (`backend/app/services/conversations.py`).
+- Two messages sent to one chat in the same instant run side by side and can interleave in the saved state (`backend/app/api/routes/chat.py`); the page sends one at a time.
 - An email that fails to send is logged and dropped, with no retry (`backend/app/services/mailer.py`).
 
 ## Open questions
@@ -246,10 +258,11 @@ Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 - Every store's server is named `woo-<subdomain>`, the first store included.
 - MCP tool servers are written with the official SDK's `MCPServer` (what was called FastMCP before SDK 2). No OAuth yet, on the server or towards WooCommerce.
 - Nothing about domains is configured until the whole project works locally; domain, DNS and TLS come afterwards with the production changes. No GoDaddy integration: two wildcard DNS records, set by hand, cover every store.
-- Chat: Groq through LiteLLM with OpenRouter as the fallback; the backend runs the tool loop; chat on the left, output panel on the right.
+- Chat: the backend runs the tool loop as a LangGraph graph and calls the gateway as the signed-in user; conversations are saved in Postgres and deleted a day or two after last use; results on the left, chat on the right. The model is Groq for now; Bifrost in front of it with OpenRouter as the fallback is decided (13 Oct) and not built.
+- Local Kubernetes: k3d (13 Oct), the same distribution as a k3s VPS.
 - Deleting a store asks for its name again and a reason, and both are recorded.
 - A store that already exists is never created a second time. Registering it again connects to the one that is there; on Kubernetes its pods are started again if they are down, and its data is kept. Only an explicit delete removes a store's pods. Built today for the registry (the first store and its server are left as they are when they already exist); the pod part comes with the Create Store Service.
-- On hold until said otherwise: which two servers are the second and third upstream; Prometheus and Grafana.
+- The second upstream server is a Risk check server of our own (13 Oct); the third is not chosen. On hold until said otherwise: Prometheus and Grafana.
 
 
 ## Keys

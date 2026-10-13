@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_admin, user_rate_limit
+from app.core.deps import common_rate_limit, get_current_user, require_admin
 from app.core.security import generate_api_key, generate_temp_password, hash_password
 from app.db.models import ApiKey, Role, TokenPurpose, User
 from app.db.session import get_db
@@ -42,7 +42,7 @@ from app.services.mailer import invite_email, notice_email, send_email
 router = APIRouter(
     prefix="/team",
     tags=["team"],
-    dependencies=[Depends(get_current_user), Depends(user_rate_limit(capacity=60, refill_per_minute=60))],
+    dependencies=[Depends(get_current_user), Depends(common_rate_limit)],
 )
 
 

@@ -120,8 +120,8 @@ def make_tool(name: str) -> types.Tool:
     return types.Tool(name=name, description=f"{name} (test)", input_schema={"type": "object", "properties": {}})
 
 
-def make_caller(store_ids: list[str], subject: str = "user-1") -> AccessToken:
+def make_caller(store_ids: list[str], subject: str = "user-1", token_type: str = "api_key") -> AccessToken:
     return AccessToken(
-        token="raw-token", client_id="api_key", scopes=[], subject=subject,
-        claims={"role": "member", "store_ids": store_ids, "token_type": "api_key"},
+        token="raw-token", client_id=token_type, scopes=[], subject=subject,
+        claims={"role": "member", "store_ids": store_ids, "token_type": token_type},
     )

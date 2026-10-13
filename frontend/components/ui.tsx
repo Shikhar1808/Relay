@@ -118,13 +118,17 @@ export function Pill({ tone, children }: { tone: keyof typeof pillStyles; childr
   );
 }
 
-export function Notice({ tone, children }: { tone: "error" | "success"; children: React.ReactNode }) {
+const noticeStyles = {
+  error: "bg-danger/10 text-danger",
+  success: "bg-good-wash text-good",
+  warning: "bg-brass-wash text-brass",
+  info: "bg-accent-wash text-accent-deep",
+};
+
+export function Notice({ tone, children }: { tone: keyof typeof noticeStyles; children: React.ReactNode }) {
   if (!children) return null;
   return (
-    <p
-      role={tone === "error" ? "alert" : "status"}
-      className={`arrive rounded-xl px-3.5 py-2.5 text-sm ${tone === "error" ? "bg-danger/10 text-danger" : "bg-good-wash text-good"}`}
-    >
+    <p role={tone === "error" ? "alert" : "status"} className={`arrive rounded-xl px-3.5 py-2.5 text-sm ${noticeStyles[tone]}`}>
       {children}
     </p>
   );

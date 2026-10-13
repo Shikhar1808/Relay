@@ -149,3 +149,8 @@ def user_rate_limit(capacity: int, refill_per_minute: float):
             )
 
     return dependency
+
+
+# The one limit every signed-in route shares: 60 requests a minute for each user, across the whole API.
+# Routes that cost more (the chat, for its model calls) add a stricter one of their own on top.
+common_rate_limit = user_rate_limit(capacity=60, refill_per_minute=60)

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -37,7 +37,11 @@ class ChatToken(Base):
     """Short-lived token the chat backend mints on behalf of a logged-in user
     so it can call the MCP Gateway without ever handing the user's real
     gateway API key to the LLM/browser layer. Never returned to the client —
-    see app/api/routes/chat.py.
+    see app/services/conversations.py.
+
+    One token serves one chat. The gateway is shown the token itself on every
+    message, so beside the hash (what /internal/auth/resolve looks up) the row
+    keeps the token encrypted, the way upstream credentials are kept.
     """
 
     __tablename__ = "chat_tokens"
@@ -45,6 +49,7 @@ class ChatToken(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)  # AES-256-GCM, app/core/crypto.py
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

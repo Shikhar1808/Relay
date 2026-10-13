@@ -17,11 +17,12 @@ class Inner:
     """Stands in for the MCP app: answers with whatever status the test sets."""
 
     def __init__(self):
-        self.status, self.calls, self.seen_ip = 200, 0, None
+        self.status, self.calls, self.seen_ip, self.seen_chat = 200, 0, None, None
 
     async def __call__(self, scope, receive, send):
         self.calls += 1
         self.seen_ip = audit_module.client_ip.get()
+        self.seen_chat = audit_module.chat_ref.get()
         await PlainTextResponse("x", self.status)(scope, receive, send)
 
 
@@ -32,14 +33,29 @@ def world(monkeypatch):
     return inner, Guard(inner)
 
 
-async def request(guard, ip="203.0.113.9") -> int:
+async def request(guard, ip="203.0.113.9", headers=()) -> int:
     sent = []
 
     async def send(message):
         sent.append(message)
 
-    await guard({"type": "http", "client": (ip, 5555), "method": "POST", "path": "/mcp", "headers": []}, None, send)
+    await guard({"type": "http", "client": (ip, 5555), "method": "POST", "path": "/mcp", "headers": list(headers)}, None, send)
     return sent[0]["status"]
+
+
+CHAT = "7d1e0c7e-52c1-4c53-9a43-0d6f1f3a8b11"
+
+
+async def test_well_formed_chat_ids_are_noted_for_the_audit_log_and_anything_else_is_dropped(world):
+    inner, guard = world
+    await request(guard, headers=[(b"x-chat-id", CHAT.upper().encode()), (b"x-chat-turn", b"'; drop table audit_log"), (b"x-other", b"1")])
+    assert inner.seen_chat == {"chat_id": CHAT}, "these end up in a log nobody can edit: only real ids, in one spelling"
+
+
+async def test_a_request_without_chat_headers_notes_none(world):
+    inner, guard = world
+    await request(guard)
+    assert inner.seen_chat == {}
 
 
 async def test_a_good_request_passes_and_is_not_counted(world, counters, audit_events):

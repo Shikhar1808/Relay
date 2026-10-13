@@ -5,8 +5,11 @@
 #   ./run_tests.sh all      also starts the compose stack with the mock upstreams
 #                           and runs both end-to-end tests (about four minutes)
 #
-# The end-to-end tests create members and stores in the dev database, and with
-# SMTP_PASSWORD set they send real emails to made-up @example.com addresses.
+# The end-to-end tests create members and stores in the dev database. With
+# SMTP_PASSWORD set they send real emails to made-up @example.com addresses, and
+# with GROQ_API_KEY set their chat messages (about fifteen) reach the model.
+# To avoid both:   SMTP_PASSWORD= GROQ_API_KEY= ./run_tests.sh all
+# Afterwards `docker compose up -d` puts the backend back on .env.
 set -eu
 cd "$(dirname "$0")"
 

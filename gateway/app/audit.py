@@ -46,6 +46,9 @@ _MAX_TEXT = 2000  # arguments, results and error texts are cut to this
 
 # Set per request by app/guard.py; None for events from background work.
 client_ip: ContextVar[str | None] = ContextVar("client_ip", default=None)
+# Which dashboard chat and which message in it a request says it belongs to (app/guard.py reads
+# the headers). Recorded only for the backend's chat agent: see call_tool in app/tools.py.
+chat_ref: ContextVar[dict[str, str]] = ContextVar("chat_ref", default={})
 
 
 def chain_hash(prev_hash: str, event: dict[str, Any], key: str | None = None) -> str:
