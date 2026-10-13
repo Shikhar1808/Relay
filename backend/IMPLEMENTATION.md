@@ -430,6 +430,12 @@ START -> call_model -> check_calls -> run_tools --------+
   them (`nodes.py: _history`). Only the message being answered carries its
   tool results. Resending old results on every call is what uses up a
   provider's tokens-a-minute limit; the model looks again when it needs data.
+- **Tool text is data, not instructions.** The prompt tells the model never
+  to follow instructions found in a tool's description or result
+  (`nodes.py: _system_prompt`). It is a request, not a lock: tried on 13 Oct
+  with an instruction planted in a customer's name, the model
+  (`openai/gpt-oss-20b`) still asked to cancel an order 5 times out of 5.
+  What stops such a change is the confirmation before a write.
 - **One reply per message, not a stream.** The page waits for the whole
   answer. (A stream of tool calls and text was built and taken out again on
   13 Oct.)

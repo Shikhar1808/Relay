@@ -203,6 +203,17 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 - raise an alert when a `registry` change has no `admin` event; today only someone reading the log sees it
 - record each edit when several land within one refresh; today they show as one net change
 
+### Adding an MCP server
+
+- **A guard on the address an admin types.** Only the scheme is checked today (`http` or `https`). So an admin, or someone with a stolen admin session, can register the database (`http://postgres:5432`), the gateway's private port or a cloud machine's credentials address (`http://169.254.169.254/`) as a "server". The gateway then connects from inside the cluster, the Servers page says whether it answered, and that server's stored credential header is sent there. This is server-side request forgery (SSRF). To build:
+  - look the host name up and judge the address it points to, not the name;
+  - never allow loopback or link-local addresses (the credentials address is link-local);
+  - allow a private address only when the host name is on an operator's list (a setting; our own servers such as `woo-mcp` go on it), because a plain "no private addresses" rule would block them;
+  - check when a server is added or edited and again on every connection, and connect to the address that passed, because a name can point somewhere else later;
+  - keep refusing redirects. The gateway's HTTP client does not follow them today (the library's default, `gateway/app/upstream.py`); say so in code when the guard is built.
+
+  The Kubernetes step's NetworkPolicy on the gateway's outgoing traffic draws the same line in the network and is the stronger of the two. Name both in the threat model note.
+
 ### Team, key and store changes (`admin_events`)
 
 - **Sign-ins and password changes** are not recorded, only team, key and store changes.
@@ -218,6 +229,7 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 ### The chat agent
 
 - **The confirmation trusts each server's own word.** A tool runs without asking when its server marks it "read only", and that mark is a hint the server sends about itself. A server an admin adds later could mark a tool that deletes things as read only. The cure is a "trusted" switch per server in the registry, with hints believed only from trusted servers. Say so in the threat model note.
+- **A planted instruction still steers the model.** The prompt says tool descriptions and results are data, never instructions (added 13 Oct). Tried the same day with an instruction planted in a customer's name, 5 runs each on `openai/gpt-oss-20b`: the model asked to cancel an order 5 times of 5 without the line and 5 of 5 with it. Stronger wording, and a reminder after each tool result, brought it down to about half at best. What stops the change is the confirmation before a write: a planted instruction ends in a box a person must approve. A planted instruction that only needs read tools has no such stop. To try once Bifrost is in: a stronger model. Say so in the threat model note.
 - **No second model to fall back on.** Groq's free tier allows 8,000 tokens a minute, and a busy minute ends in "the chat model is not available". Earlier turns are already sent as text only to keep requests small.
 - **No streaming and no stop button.** A long answer shows only the typing dots until it is whole. Behind an Ingress, a run longer than the proxy's timeout (often 60 seconds) would be cut.
 - **The frontend's check in headless Chrome was done by hand,** not kept as a test.
@@ -234,7 +246,7 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 
 Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 
-- No filter on where an upstream URL may point (`backend/app/api/routes/upstreams.py`): only the admin can add one today.
+- No filter on where an upstream URL may point (`backend/app/api/routes/upstreams.py`): only the admin can add one today. What to build is under "Adding an MCP server" above.
 - Two first chat messages sent in the same instant can each open a chat (`backend/app/services/conversations.py`).
 - Two messages sent to one chat in the same instant run side by side and can interleave in the saved state (`backend/app/api/routes/chat.py`); the page sends one at a time.
 - An email that fails to send is logged and dropped, with no retry (`backend/app/services/mailer.py`).
