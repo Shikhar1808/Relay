@@ -1,17 +1,22 @@
 #!/bin/sh
-# Prepares the two databases the gateway uses. Safe to run again (it also
-# resets the role's password to the current GATEWAY_DB_PASSWORD). Run it after
-# the backend's migrations, because upstream_servers has to exist to be granted.
+# Prepares the databases next to the platform's own: the two the gateway uses,
+# and fulfilment-mcp's. Safe to run again (it also resets each role's password
+# to the current value). Run it after the backend's migrations, because
+# upstream_servers has to exist to be granted.
 #
 #   Platform DB: role `gateway` can read the upstream registry and nothing else.
 #   mcp_logs:    the audit log. `gateway` can add rows and read them; a trigger
 #                refuses UPDATE, DELETE and TRUNCATE for everyone, the owner included.
+#   fulfilment:  fulfilment-mcp's records. Role `fulfilment` can read, add and
+#                change rows of its one table: no DELETE, no DDL.
+#   Each role can connect only to the databases granted to it here.
 #
-# Needs: PGHOST, PGUSER, PGPASSWORD, PGDATABASE (an admin of the Platform DB)
-# and GATEWAY_DB_PASSWORD.
+# Needs: PGHOST, PGUSER, PGPASSWORD, PGDATABASE (an admin of the Platform DB),
+# GATEWAY_DB_PASSWORD and FULFILMENT_DB_PASSWORD.
 set -eu
 
-psql -v ON_ERROR_STOP=1 -v gateway_password="$GATEWAY_DB_PASSWORD" <<'SQL'
+psql -v ON_ERROR_STOP=1 -v gateway_password="$GATEWAY_DB_PASSWORD" \
+    -v fulfilment_password="$FULFILMENT_DB_PASSWORD" -v platform_db="$PGDATABASE" <<'SQL'
 SELECT 'CREATE ROLE gateway LOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gateway') \gexec
 ALTER ROLE gateway PASSWORD :'gateway_password';
 SELECT format('GRANT CONNECT ON DATABASE %I TO gateway', current_database()) \gexec
@@ -51,5 +56,30 @@ CREATE OR REPLACE TRIGGER audit_log_no_truncate BEFORE TRUNCATE ON audit_log
 GRANT CONNECT ON DATABASE mcp_logs TO gateway;
 GRANT USAGE ON SCHEMA public TO gateway;
 GRANT INSERT, SELECT ON audit_log TO gateway;
+
+-- fulfilment-mcp keeps its records here, not in its pod, so the pod can be killed or run twice.
+SELECT 'CREATE ROLE fulfilment LOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fulfilment') \gexec
+ALTER ROLE fulfilment PASSWORD :'fulfilment_password';
+SELECT 'CREATE DATABASE fulfilment' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'fulfilment') \gexec
+\connect fulfilment
+
+-- One store's orders (one fulfilment-mcp per store): the order id is the store's own.
+CREATE TABLE IF NOT EXISTS fulfilments (
+    order_id        bigint PRIMARY KEY,
+    stage           text NOT NULL DEFAULT 'packing' CHECK (stage IN ('packing', 'shipped', 'delivered')),
+    tracking_number text NOT NULL UNIQUE,
+    date_started    timestamptz NOT NULL DEFAULT now(),
+    date_updated    timestamptz NOT NULL DEFAULT now()
+);
+
+GRANT CONNECT ON DATABASE fulfilment TO fulfilment;
+GRANT USAGE ON SCHEMA public TO fulfilment;
+GRANT SELECT, INSERT, UPDATE ON fulfilments TO fulfilment;
+
+-- Postgres lets every role connect to every database unless told otherwise. From here on only the
+-- grants above count: fulfilment cannot open the platform or the audit log, the gateway not fulfilment.
+-- The backend and this script sign in as the owner, which needs no grant.
+REVOKE CONNECT ON DATABASE :"platform_db", mcp_logs, fulfilment FROM PUBLIC;
 SQL
-echo "db-init: role 'gateway' can read upstream_servers and append to mcp_logs.audit_log"
+echo "db-init: role 'gateway' can read upstream_servers and append to mcp_logs.audit_log;" \
+    "role 'fulfilment' can read, add and change fulfilment.fulfilments"

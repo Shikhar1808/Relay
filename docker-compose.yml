@@ -73,8 +73,9 @@ services:
       - "8000:8000"
 
   # One-shot: gives the gateway a database role that can only read the
-  # upstream registry, and creates the append-only audit log database (mcp_logs).
-  # Runs after the backend, whose migrations create the registry table.
+  # upstream registry, creates the append-only audit log database (mcp_logs),
+  # and fulfilment-mcp's database and role. Runs after the backend, whose
+  # migrations create the registry table.
   db-init:
     image: postgres:18-alpine
     environment:
@@ -83,6 +84,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
       PGDATABASE: ${POSTGRES_DB:-platform}
       GATEWAY_DB_PASSWORD: ${GATEWAY_DB_PASSWORD:?set GATEWAY_DB_PASSWORD in .env}
+      FULFILMENT_DB_PASSWORD: ${FULFILMENT_DB_PASSWORD:?set FULFILMENT_DB_PASSWORD in .env}
     volumes:
       - ./gateway/deploy/db-init.sh:/db-init.sh:ro
     entrypoint: ["sh", "/db-init.sh"]
@@ -187,6 +189,29 @@ services:
       wp-init:
         condition: service_completed_successfully
     # No ports on purpose: only the gateway reaches this, over the compose network.
+
+  # ---- Servers 2 and 3. Registered by hand as the admin (see each README) ----
+  photos-mcp:
+    build: ./photos-mcp
+    environment:
+      # Optional: without a key the server starts and its tool answers that it is not set up.
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      MCP_AUTH_TOKEN: ${PHOTOS_MCP_TOKEN:?set PHOTOS_MCP_TOKEN in .env}
+    read_only: true
+    # No ports on purpose: only the gateway reaches this.
+
+  fulfilment-mcp:
+    build: ./fulfilment-mcp
+    environment:
+      # Its own database and role, made by db-init: it cannot open the platform's.
+      DATABASE_URL: postgresql://fulfilment:${FULFILMENT_DB_PASSWORD}@postgres:5432/fulfilment
+      MCP_AUTH_TOKEN: ${FULFILMENT_MCP_TOKEN:?set FULFILMENT_MCP_TOKEN in .env}
+      TIMEZONE: ${WP_TIMEZONE:-Asia/Kolkata}
+    read_only: true
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    # No ports on purpose: only the gateway reaches this.
 
   # Fake upstream MCP servers for gateway/tests/integration_test.py:
   #   docker compose --profile test up -d

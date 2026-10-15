@@ -1,0 +1,24 @@
+[project]
+name = "urumi-photos-mcp"
+version = "0.1.0"
+description = "Product photos MCP server: stock photos from Pexels as a tool, for the gateway only"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp==2.3.0",
+    "uvicorn==0.54.0",
+    "pydantic-settings==2.6.1",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+]
+
+[tool.pytest.ini_options]
+# `uv run pytest` from this directory. These tests need no running stack.
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

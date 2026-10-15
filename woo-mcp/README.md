@@ -21,8 +21,8 @@ as `woo-<subdomain>`, so its tools read `woo-<subdomain>__list_orders`.
 |---|---|---|
 | `list_products` | `GET products` | `search`, `status`, `page`, `per_page` (20, at most 100) |
 | `get_product` | `GET products/{id}` | also returns the description |
-| `create_product` | `POST products` | a simple product, published unless `status` is `draft`; a name already taken is refused |
-| `update_product` | `PUT products/{id}` | only the fields given are changed; a new name already taken is refused |
+| `create_product` | `POST products` | a simple product, published unless `status` is `draft`; a name already taken is refused; `image_url` sets its photo |
+| `update_product` | `PUT products/{id}` | only the fields given are changed; a new name already taken is refused; `image_url` replaces its photos |
 | `list_orders` | `GET orders` | `status`, `after`, `before`, `page`, `per_page` |
 | `get_order` | `GET orders/{id}` | |
 | `update_order_status` | `PUT orders/{id}` | one of WooCommerce's seven statuses |
@@ -30,7 +30,13 @@ as `woo-<subdomain>`, so its tools read `woo-<subdomain>__list_orders`.
 - **Short records.** A tool returns a few fields of WooCommerce's large
   objects: enough to answer with, small enough for a model's context, and no
   more customer data than a question needs (name and email, no address, phone
-  or IP). Product links are left out: see "Talking to the store".
+  or IP). Product links are left out: see "Talking to the store". For the
+  same reason a product says `has_photo`, not where its photo is.
+- **Photos.** `image_url` is an `https://` address, for example a photo from
+  `photos-mcp`'s `find_photos`. WooCommerce downloads it into WordPress's
+  media library (`images: [{"src": …}]`), so the product does not depend on
+  the address afterwards; a download that fails comes back as a tool error.
+  Any other scheme is refused before the store is asked.
 - **No duplicate products.** An agent that gets no answer in time may ask
   again, and the first request may have gone through. WooCommerce's REST API
   has no transactions and no idempotency keys, but it refuses a second product

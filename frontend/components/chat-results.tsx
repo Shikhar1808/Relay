@@ -1,6 +1,10 @@
 import { Notice } from "@/components/ui";
 import type { ChatBlock } from "@/lib/api";
 
+// Only Pexels photos (photos-mcp) are drawn as pictures: loading an image from any other address
+// a tool returned would tell that address who looked at the results, and when.
+const PEXELS_PHOTO = /^https:\/\/images\.pexels\.com\/\S+$/;
+
 function Block({ block }: { block: ChatBlock }) {
   return (
     <section aria-label={block.title} className="arrive">
@@ -27,7 +31,13 @@ function Block({ block }: { block: ChatBlock }) {
                 <tr key={index} className="border-t border-line">
                   {row.map((cell, column) => (
                     <td key={column} className="px-3 py-2 align-top">
-                      {cell}
+                      {typeof cell === "string" && PEXELS_PHOTO.test(cell) ? (
+                        // alt="": the photo's description is in the same row.
+                        // eslint-disable-next-line @next/next/no-img-element -- a thumbnail; next/image would proxy it and need remotePatterns
+                        <img src={cell} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-16 w-16 rounded-lg object-cover" />
+                      ) : (
+                        cell
+                      )}
                     </td>
                   ))}
                 </tr>

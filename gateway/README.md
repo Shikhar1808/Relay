@@ -167,7 +167,7 @@ app/
   guard.py      Refused logins: recorded, counted, blocked after too many
   limits.py     Rate limits in Redis: a token bucket for tool calls, a counter for refused logins
   main.py       The public app (/mcp) and the private app (health, audit log for the backend)
-deploy/db-init.sh   Creates the gateway's database role and the audit log database
+deploy/db-init.sh   Creates the gateway's database role and the audit log database, and fulfilment-mcp's database and role
 tests/
   test_*.py            Unit tests (pytest); the database, Redis, backend and upstreams are faked
   integration_test.py  End-to-end test against the live compose stack

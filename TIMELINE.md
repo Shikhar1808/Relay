@@ -4,8 +4,8 @@ Progress against the plan in `extras/Urumi FDE — Full Implementation Guide.pdf
 and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on Kubernetes.pdf`.
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 13 Oct 2026
-- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. Next: the Servers page, two more upstream servers, then Kubernetes
+- **Last updated:** 16 Oct 2026
+- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. Servers 2 and 3 (Product photos, Fulfilment) are written and unit-tested, not yet registered or run live. Next: register them by hand and run the chat flow, the Servers page, then Kubernetes
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -61,7 +61,10 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 ## Oct 16: Buffer and integration test
 
 - [ ] Full definition-of-done flow by hand
-- [ ] Second and third upstream servers (GitHub MCP, one small custom server)
+- [ ] Second and third upstream servers, chosen 16 Oct, written and unit-tested; tick once both are registered by hand and the chat flow below has run:
+  - Product photos (`photos-mcp/`): `find_photos` searches Pexels with a key only it holds; `woo-mcp`'s `create_product` and `update_product` take `image_url`, and the store copies the photo; the results panel shows Pexels photos as thumbnails. Shared by every store.
+  - Fulfilment (`fulfilment-mcp/`): `start_fulfilment`, `advance_fulfilment` (packing → shipped → delivered, never back, a batch all or nothing), `list_fulfilments`. Records in Postgres in a database and role of their own (`gateway/deploy/db-init.sh`), so the pod keeps nothing. One per store.
+  - Chat flow to check: "add a Blue Mug at 299 with a photo", "ship today's processing orders", "mark them delivered" (the orders end `completed` in the store).
 - [x] API key revocation rejected at the gateway
 - [x] Disabling an upstream removes its tools
 
@@ -238,7 +241,7 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 ### Tests and housekeeping
 
 - **A throwaway database for the end-to-end tests.** Each run leaves members, stores and audit rows in the dev database; with `SMTP_PASSWORD` set it sends real emails to made-up addresses, and with `GROQ_API_KEY` set its chat messages reach the model (`SMTP_PASSWORD= GROQ_API_KEY= ./run_tests.sh all` avoids both).
-- **Not tested:** several gateway replicas at once; Postgres going down while the gateway runs; the multi-store pages in a browser.
+- **Not tested:** several gateway replicas at once; Postgres going down while the gateway runs; the multi-store pages in a browser. (`fulfilment-mcp`'s SQL is tested against the real Postgres by `./run_tests.sh all`, in `fulfilment-mcp/tests/test_database.py`; not yet run, 16 Oct: Docker was not on the machine the code was written on.)
 - **No automated end-to-end test with a real WordPress.** The WooCommerce checkpoint was run once by script on 12 Oct and is not in `./run_tests.sh all`; only the store's registration is checked there. Add the scripted run with the chat step.
 - **A proper HTTP client for the audit calls.** `backend/app/services/gateway_audit.py` still calls the gateway's private port with the standard library in a worker thread. The chat agent brought an async client in (the MCP SDK's); move these calls onto it.
 
@@ -250,6 +253,7 @@ Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 - Two first chat messages sent in the same instant can each open a chat (`backend/app/services/conversations.py`).
 - Two messages sent to one chat in the same instant run side by side and can interleave in the saved state (`backend/app/api/routes/chat.py`); the page sends one at a time.
 - An email that fails to send is logged and dropped, with no retry (`backend/app/services/mailer.py`).
+- `fulfilment-mcp` opens one database connection per tool call, and one fulfilment database serves one store (`fulfilment-mcp/app/main.py`).
 
 ## Open questions
 
@@ -274,7 +278,7 @@ Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 - Local Kubernetes: k3d (13 Oct), the same distribution as a k3s VPS.
 - Deleting a store asks for its name again and a reason, and both are recorded.
 - A store that already exists is never created a second time. Registering it again connects to the one that is there; on Kubernetes its pods are started again if they are down, and its data is kept. Only an explicit delete removes a store's pods. Built today for the registry (the first store and its server are left as they are when they already exist); the pod part comes with the Create Store Service.
-- The second upstream server is a Risk check server of our own (13 Oct); the third is not chosen. On hold until said otherwise: Prometheus and Grafana.
+- Servers 2 and 3 are Product photos and Fulfilment (16 Oct; this replaces Risk check of 13 Oct). Both are ours, written like `woo-mcp`, and registered by hand as the admin, which is also the demo's "add a server by URL and credential" step. Fulfilment keeps its records in the platform's Postgres, in a database and role of its own, not in a third database engine. On hold until said otherwise: Prometheus and Grafana.
 
 
 ## Keys
@@ -299,7 +303,13 @@ Generated once, kept in .env
 │ GATEWAY_ENCRYPTION_KEY                 │ base64(os.urandom(32))                                     │ 256 bits, the AES-256 key │
 ├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
 │ GATEWAY_DB_PASSWORD                    │ 48 hex characters, because it sits inside a connection URL │ 192 bits                  │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ PHOTOS_MCP_TOKEN, FULFILMENT_MCP_TOKEN │ secrets.token_urlsafe(48)                                  │ 384 bits                  │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ FULFILMENT_DB_PASSWORD                 │ secrets.token_hex(24), because it sits inside a URL        │ 192 bits                  │
 └────────────────────────────────────────┴────────────────────────────────────────────────────────────┴───────────────────────────┘
+
+PEXELS_API_KEY is not ours to generate: it comes from https://www.pexels.com/api/.
 
 I generated the first four rows in this session with one short Python script that appended them to .env without printing them. The last three rows were already in your .env; their lengths match the commands written in .env.example.
 

@@ -1,0 +1,27 @@
+[project]
+name = "urumi-fulfilment-mcp"
+version = "0.1.0"
+description = "Fulfilment MCP server: one store's orders through packing, shipped and delivered, for the gateway only"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp==2.3.0",
+    "uvicorn==0.54.0",
+    "pydantic-settings==2.6.1",
+    "asyncpg==0.30.0",
+    # Time zones: the image has the system's; Windows has none (the backend gets the same through its dependencies).
+    "tzdata==2026.5; sys_platform == 'win32'",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+]
+
+[tool.pytest.ini_options]
+# `uv run pytest` from this directory. These tests need no running stack.
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

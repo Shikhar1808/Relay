@@ -32,6 +32,7 @@ Page = Annotated[int, Field(ge=1)]
 PerPage = Annotated[int, Field(ge=1, le=100)]
 Price = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 Stock = Annotated[int, Field(ge=0)]
+ImageUrl = Annotated[str, Field(pattern=r"^https://\S+$", max_length=2000)]
 
 # What a tool returns of WooCommerce's much larger objects: enough to answer with,
 # small enough for a model's context, and no more customer data than a question needs.
@@ -117,7 +118,8 @@ def _money(price: float) -> str:
 
 
 def _product(product: dict[str, Any], *extra: str) -> dict[str, Any]:
-    return {field: product.get(field) for field in (*_PRODUCT_FIELDS, *extra)}
+    # Whether it has a photo, not the photo's address: like every link here, WordPress writes it as https:// (_client).
+    return {field: product.get(field) for field in (*_PRODUCT_FIELDS, *extra)} | {"has_photo": bool(product.get("images"))}
 
 
 def _order(order: dict[str, Any]) -> dict[str, Any]:
@@ -162,14 +164,18 @@ async def create_product(
     description: str | None = None,
     status: ProductStatus = "publish",
     stock_quantity: Stock | None = None,
+    image_url: ImageUrl | None = None,
 ) -> dict[str, Any]:
     """Create a product. With status "publish" (the default) it shows on the storefront at once.
     Give `stock_quantity` only if the store should count stock for it.
+    `image_url` (https), for example a photo from find_photos, becomes the product's photo: the store copies it.
     A name that a product already has is refused, so asking twice never makes two."""
     body = {"name": name, "type": "simple", "status": status, "regular_price": _money(regular_price), "sku": _sku(name)}
     body |= _given(description=description, stock_quantity=stock_quantity)
     if stock_quantity is not None:
         body["manage_stock"] = True
+    if image_url is not None:
+        body["images"] = [{"src": image_url}]
     return _product(await _woo("POST", "products", json=body), "description")
 
 
@@ -181,13 +187,17 @@ async def update_product(
     description: str | None = None,
     status: ProductStatus | None = None,
     stock_quantity: Stock | None = None,
+    image_url: ImageUrl | None = None,
 ) -> dict[str, Any]:
-    """Change a product. Only the fields given are changed. A new name that another product already has is refused."""
+    """Change a product. Only the fields given are changed. A new name that another product already has is refused.
+    `image_url` (https) replaces the product's photos with this one."""
     body = _given(name=name, description=description, status=status, stock_quantity=stock_quantity)
     if regular_price is not None:
         body["regular_price"] = _money(regular_price)
     if stock_quantity is not None:
         body["manage_stock"] = True
+    if image_url is not None:
+        body["images"] = [{"src": image_url}]
     if not body:
         raise ToolError("Nothing to change: give at least one field besides product_id")
     # A product made here carries its name's SKU, which moves with the name. A SKU the merchant chose is left alone.
