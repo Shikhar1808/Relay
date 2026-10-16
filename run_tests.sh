@@ -24,8 +24,8 @@ echo "== gateway unit tests"
 (cd gateway && uv run pytest -q)
 echo "== woo-mcp unit tests"
 (cd woo-mcp && uv run pytest -q)
-echo "== photos-mcp unit tests"
-(cd photos-mcp && uv run pytest -q)
+echo "== risk-mcp unit tests"
+(cd risk-mcp && uv run pytest -q)
 echo "== fulfilment-mcp unit tests"
 (cd fulfilment-mcp && uv run pytest -q)
 

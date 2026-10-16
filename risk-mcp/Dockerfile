@@ -7,7 +7,7 @@ RUN uv sync --frozen --no-dev
 
 # Runtime stage: no uv, no build tools, not root.
 FROM python:3.12-slim
-RUN useradd --system --uid 10001 --no-create-home photos
+RUN useradd --system --uid 10001 --no-create-home risk
 WORKDIR /app
 COPY --from=build /app/.venv ./.venv
 COPY app ./app

@@ -762,7 +762,7 @@ wheels = [
 ]
 
 [[package]]
-name = "urumi-photos-mcp"
+name = "urumi-risk-mcp"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

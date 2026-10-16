@@ -31,7 +31,6 @@ SHORT_PRODUCT = {
     "id": 12, "name": "Blue Mug", "slug": "blue-mug", "status": "publish", "price": "19.00", "regular_price": "19.00",
     "stock_status": "instock", "stock_quantity": None, "has_photo": False,
 }
-PHOTO = "https://images.pexels.com/photos/1/pexels-photo-1.jpeg?auto=compress&h=650&w=940"
 
 
 class FakeStore:
@@ -112,7 +111,7 @@ async def test_orders_come_back_as_short_records(store):
     store.body = [ORDER]
     assert (await call("list_orders"))["orders"] == [{
         "id": 7, "number": "7", "status": "processing", "total": "38.00", "currency": "INR",
-        "date_created": "2026-10-12T10:15:00", "payment_method": "Cash on delivery",
+        "date_created": "2026-10-12T10:15:00", "payment_method": "Cash on delivery", "payment_code": "cod",
         "customer": "Asha Rao", "email": "asha@example.com",
         "items": [{"name": "Blue Mug", "quantity": 2, "total": "38.00"}],
     }]
@@ -169,23 +168,6 @@ async def test_a_stock_quantity_turns_stock_management_on(store):
     await call("create_product", name="Blue Mug", regular_price=19, stock_quantity=5, description="Holds tea.", status="draft")
     body = json.loads(store.requests[0].content)
     assert (body["manage_stock"], body["stock_quantity"], body["description"], body["status"]) == (True, 5, "Holds tea.", "draft")
-
-
-@pytest.mark.parametrize(("tool", "arguments"), [
-    ("create_product", {"name": "Blue Mug", "regular_price": 19}),
-    ("update_product", {"product_id": 12}),
-])
-async def test_a_photo_is_sent_for_the_store_to_copy(store, tool, arguments):
-    store.body = PRODUCT
-    await call(tool, **arguments, image_url=PHOTO)
-    assert json.loads(store.requests[-1].content)["images"] == [{"src": PHOTO}]
-
-
-@pytest.mark.parametrize("address", ["http://images.pexels.com/x.jpeg", "file:///etc/passwd", "https://", "https://a b.jpeg"])
-async def test_a_photo_address_that_is_not_https_is_refused_before_the_store_is_asked(store, address):
-    with pytest.raises(ToolError):
-        await call("create_product", name="Blue Mug", regular_price=19, image_url=address)
-    assert store.requests == []
 
 
 async def test_a_product_says_whether_it_has_a_photo_but_not_where(store):

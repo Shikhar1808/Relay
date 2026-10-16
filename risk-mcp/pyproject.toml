@@ -1,7 +1,7 @@
 [project]
-name = "urumi-photos-mcp"
+name = "urumi-risk-mcp"
 version = "0.1.0"
-description = "Product photos MCP server: stock photos from Pexels as a tool, for the gateway only"
+description = "Risk check MCP server: scores orders with fixed rules, for the gateway only"
 requires-python = ">=3.12"
 dependencies = [
     "mcp==2.3.0",

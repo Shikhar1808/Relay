@@ -191,12 +191,10 @@ services:
     # No ports on purpose: only the gateway reaches this, over the compose network.
 
   # ---- Servers 2 and 3. Registered by hand as the admin (see each README) ----
-  photos-mcp:
-    build: ./photos-mcp
+  risk-mcp:
+    build: ./risk-mcp
     environment:
-      # Optional: without a key the server starts and its tool answers that it is not set up.
-      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
-      MCP_AUTH_TOKEN: ${PHOTOS_MCP_TOKEN:?set PHOTOS_MCP_TOKEN in .env}
+      MCP_AUTH_TOKEN: ${RISK_MCP_TOKEN:?set RISK_MCP_TOKEN in .env}
     read_only: true
     # No ports on purpose: only the gateway reaches this.
 
