@@ -482,6 +482,14 @@ def main() -> int:
     # Its store.create event is not looked for here: it was written on the database's first start, and
     # `events` is only the latest 200. tests/test_first_store.py checks that it is recorded.
     _ok(f'the store "{first}" is in the list and its server woo-{first} belongs to it')
+    # The gateway probes every 30 s, and at once on a change; a fresh stack may not have probed yet.
+    for _ in range(35):
+        if woo["status"] == "connected":
+            break
+        time.sleep(1)
+        woo = next(u for u in client.get("/upstream-servers", headers=admin_headers).json() if u["slug"] == f"woo-{first}")
+    assert woo["status"] == "connected" and "list_orders" in woo["tools"], woo
+    _ok(f"the Servers page sees woo-{first} as connected, with its tools, from the gateway's last probe")
     for refused in ("UPDATE admin_events SET action = 'x'", "DELETE FROM admin_events", "TRUNCATE admin_events"):
         assert "append-only" in _psql(repo_root, refused, ok=False), refused
     _ok("rows there cannot be changed, deleted or truncated, even by the database owner")

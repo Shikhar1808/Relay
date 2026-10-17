@@ -175,6 +175,7 @@ const iconPaths = {
   account: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4.5 20.5c0-3.6 3.3-6 7.5-6s7.5 2.4 7.5 6",
   audit: "M7 3.5h10A1.5 1.5 0 0 1 18.5 5v14a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5ZM9 8.5h6M9 12h6M9 15.5h3.5",
   send: "M12 19V5M5.5 11.5 12 5l6.5 6.5",
+  servers: "M5 4h14v6.5H5zM5 13.5h14V20H5zM8.5 7.25h.01M8.5 16.75h.01",
 };
 
 export function Icon({ name }: { name: keyof typeof iconPaths }) {

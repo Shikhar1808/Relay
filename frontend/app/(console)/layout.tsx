@@ -26,6 +26,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   const links = [
     { href: "/stores", label: "Stores", icon: "stores" },
     ...(isAdmin ? [{ href: "/team", label: "Team", icon: "team" } as const] : []),
+    ...(isAdmin ? [{ href: "/servers", label: "Servers", icon: "servers" } as const] : []),
     { href: "/chat", label: "Chat", icon: "chat" },
     { href: "/api-key", label: "API key", icon: "key" },
     ...(isAdmin ? [{ href: "/audit", label: "Audit", icon: "audit" } as const] : []),

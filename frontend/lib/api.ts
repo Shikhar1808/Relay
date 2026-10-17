@@ -30,7 +30,22 @@ export type ApiKey = {
   last_used_at: string | null;
 };
 
-export type ApiKeyCreated = { id: string; raw_key: string; prefix: string; name: string | null };
+/** An MCP server the gateway forwards to. `status` and `tools` come from the gateway's last probe. */
+export type UpstreamServer = {
+  id: string;
+  name: string;
+  slug: string;
+  url: string;
+  enabled: boolean;
+  credential_header: string;
+  has_credential: boolean;
+  store_id: string | null; // null: every store
+  created_at: string;
+  status: "connected" | "unreachable" | "unknown";
+  tools: string[];
+};
+
+export type ApiKeyCreated ={ id: string; raw_key: string; prefix: string; name: string | null };
 export type MemberCreated = { user: User; temporary_password: string };
 /** What sign in answers. It also carries the token itself, for scripts; the dashboard never touches it. */
 export type TokenResponse = { user: User };

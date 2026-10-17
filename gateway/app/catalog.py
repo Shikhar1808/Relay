@@ -7,6 +7,7 @@ snapshot, so a slow or dead upstream cannot delay tools/list for anyone, and a
 disabled upstream's tools are gone on the next refresh.
 """
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 
@@ -75,13 +76,14 @@ class Catalog:
                     NOTICE if answered else ERROR, "upstream_health", "probe", "connected" if answered else "unreachable", upstream=slug
                 )
 
-        # The dashboard reads these (through the backend) to show Connected / Unreachable.
+        # The Servers page reads these (through the backend): Connected / Unreachable and each server's tools.
         # They expire, so a stopped gateway does not leave stale "connected" marks.
         # Best effort: tools must keep being served while Redis is away.
         ttl = int(settings.refresh_seconds * 3)
         try:
             for up in upstreams.values():
                 await redis.set(f"upstream:{up.id}:status", "connected" if up.slug in tools else "unreachable", ex=ttl)
+                await redis.set(f"upstream:{up.id}:tools", json.dumps([tool.name for tool in tools.get(up.slug, [])]), ex=ttl)
         except Exception as exc:
             log.warning("could not publish upstream status to Redis: %s", type(exc).__name__)
 

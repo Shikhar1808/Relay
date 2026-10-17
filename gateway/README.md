@@ -27,7 +27,8 @@ MCP client / chat agent ──► gateway :8080/mcp ──► upstream MCP serve
   Requests read the finished snapshot, so a hung or dead upstream cannot slow
   `tools/list`. Calls time out after 30 s with a clear error.
 - **Publishes health**: `upstream:<id>:status` in Redis is `connected` or
-  `unreachable`, for the dashboard.
+  `unreachable`, and `upstream:<id>:tools` a JSON list of its tool names, for
+  the dashboard's Servers page.
 - **Records everything that matters** in an append-only audit log (below).
 
 ## Who gets in

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, HttpUrl, StringConstraints
 
@@ -60,3 +60,6 @@ class UpstreamOut(BaseModel):
     has_credential: bool  # the credential itself is never returned
     store_id: uuid.UUID | None
     created_at: datetime
+    # From the gateway's last probe, in the list only. "unknown": not probed yet, disabled, or the gateway is down.
+    status: Literal["connected", "unreachable", "unknown"] = "unknown"
+    tools: list[str] = []

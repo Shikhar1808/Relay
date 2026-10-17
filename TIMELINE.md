@@ -4,8 +4,8 @@ Progress against the plan in `extras/Urumi FDE — Full Implementation Guide.pdf
 and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on Kubernetes.pdf`.
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 16 Oct 2026
-- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. Servers 2 and 3 (Risk check, Fulfilment) are written and unit-tested, not yet registered or run live. Next: register them by hand and run the chat flow, the Servers page, then Kubernetes
+- **Last updated:** 17 Oct 2026
+- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. Servers 2 and 3 (Risk check, Fulfilment) are written and unit-tested, not yet registered or run live. The Servers page is built. Next: register both from it and run the chat flow, then Kubernetes
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -54,7 +54,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [ ] Streaming replies. Built on 13 Oct (tool calls and text as they happen) and taken out the same day at the user's request: a message is answered in one piece
 - [x] Chat page layout after `refernces/chatBotDesign.png`: the results on the left (each tool result as a table, a card or a notice, with the tool it came from, then the calls in words, and from the second answer on the list of every tool the chat has used), the chat on the right. Checked in headless Chrome at desktop and phone widths (13 Oct): a read, a write with its confirmation, a reload, ending the chat, reading an earlier one
 - [x] Dashboard shell: sign in, side navigation, Team, API key, Chat, Account, Stores pages
-- [ ] Dashboard: Servers page
+- [x] Dashboard: Servers page (`/servers`, admin only; 17 Oct): add, edit, disable, remove, and each server's status and tools from the gateway's last probe (it now also writes `upstream:<id>:tools` to Redis). Checked in headless Chrome at desktop and phone widths, with `woo-demo` connected and its 7 tools
 - [x] Dashboard: Audit log page (`/audit`, admin only; checked in a browser at desktop and phone widths)
 - [x] **Checkpoint:** ask a question in chat, the agent calls a WooCommerce tool, the reply comes back (in one piece, see above; 13 Oct, with Groq's `openai/gpt-oss-20b`: "what orders came in today?", and a product created after a confirmation and seen on the storefront)
 
@@ -90,7 +90,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 ## Oct 21: Health checks and audit log UI
 
 - [x] Background upstream health check (30 s, cached in Redis as `upstream:<id>:status`)
-- [ ] Servers page shows Connected / Unreachable / Disabled
+- [x] Servers page shows Connected / Unreachable / Disabled (and Unchecked before the first probe)
 - [ ] Kill-pod test: dead server shows Unreachable, others keep working
 - [x] Audit log page: user, server, tool, time, duration, outcome (also level, refused sign-ins, server changes, server health, team/key/store changes, and a "has the log been tampered with" check)
 

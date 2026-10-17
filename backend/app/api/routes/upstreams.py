@@ -9,7 +9,9 @@ Every change is written to the gateway's audit log before it is committed
 (who, which server, what was sent). If that fails, the change is refused.
 """
 import contextlib
+import json
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -34,8 +36,9 @@ router = APIRouter(
 )
 
 
-def _out(server: UpstreamServer) -> UpstreamOut:
+def _out(server: UpstreamServer, **health: Any) -> UpstreamOut:
     return UpstreamOut(
+        **health,
         id=server.id,
         name=server.name,
         slug=server.slug,
@@ -82,9 +85,17 @@ async def _get(db: AsyncSession, server_id: uuid.UUID) -> UpstreamServer:
 
 
 @router.get("", response_model=list[UpstreamOut])
-async def list_upstreams(db: AsyncSession = Depends(get_db)) -> list[UpstreamOut]:
+async def list_upstreams(db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)) -> list[UpstreamOut]:
     result = await db.execute(select(UpstreamServer).order_by(UpstreamServer.created_at))
-    return [_out(server) for server in result.scalars().all()]
+    servers = result.scalars().all()
+    if not servers:
+        return []
+    # The gateway writes both on every probe (gateway/app/catalog.py) and lets them expire.
+    found = await redis.mget([f"upstream:{server.id}:{part}" for server in servers for part in ("status", "tools")])
+    return [
+        _out(server, status=status or "unknown", tools=json.loads(tools) if tools else [])
+        for server, status, tools in zip(servers, found[::2], found[1::2], strict=True)
+    ]
 
 
 @router.post("", response_model=UpstreamOut, status_code=status.HTTP_201_CREATED)
