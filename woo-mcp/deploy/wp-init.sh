@@ -6,7 +6,7 @@
 #
 # Needs the WORDPRESS_DB_* variables of the wordpress image (its wp-config.php reads them),
 # and WP_URL, WP_TITLE, WP_ADMIN_USER, WP_ADMIN_PASSWORD, WP_ADMIN_EMAIL,
-# WOOCOMMERCE_KEY, WOOCOMMERCE_SECRET. Optional: WP_TIMEZONE, WP_CURRENCY.
+# WOOCOMMERCE_KEY, WOOCOMMERCE_SECRET. Optional: WP_TIMEZONE, WP_CURRENCY, WP_COUNTRY.
 set -eu
 export WP_CLI_CACHE_DIR=/tmp/wp-cli-cache  # this runs as WordPress's uid, which has no home directory here
 
@@ -61,6 +61,8 @@ if [ "$(wp option get urumi_store_set_up 2>/dev/null)" != yes ]; then
     [ -z "${WP_TIMEZONE:-}" ] || wp option update timezone_string "$WP_TIMEZONE"
     # Prices are shown in it, and risk-mcp's limits are amounts in it. WooCommerce's default is USD.
     [ -z "${WP_CURRENCY:-}" ] || wp option update woocommerce_currency "$WP_CURRENCY"
+    # Where the store is (country:state). Checkout starts on it, and taxes follow it. WooCommerce's default is US:CA.
+    [ -z "${WP_COUNTRY:-}" ] || wp option update woocommerce_default_country "$WP_COUNTRY"
 
     wp wc tool run install_pages --user="$WP_ADMIN_USER"  # shop, cart, checkout, my account
     wp wc payment_gateway update cod --enabled=true --user="$WP_ADMIN_USER"

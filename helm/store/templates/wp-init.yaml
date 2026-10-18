@@ -45,6 +45,7 @@ spec:
             - { name: WP_ADMIN_EMAIL, value: {{ .Values.store.adminEmail | quote }} }
             - { name: WP_TIMEZONE, value: {{ .Values.store.timezone | quote }} }
             - { name: WP_CURRENCY, value: {{ .Values.store.currency | quote }} }
+            - { name: WP_COUNTRY, value: {{ .Values.store.country | quote }} }
             - { name: WOOCOMMERCE_KEY, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: WOOCOMMERCE_KEY } } }
             - { name: WOOCOMMERCE_SECRET, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: WOOCOMMERCE_SECRET } } }
           resources:

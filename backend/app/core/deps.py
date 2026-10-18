@@ -17,6 +17,10 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis, from_url
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +33,14 @@ from app.db.session import get_db
 SESSION_COOKIE = "urumi_session"
 _READ_ONLY = {"GET", "HEAD", "OPTIONS"}
 _bearer = HTTPBearer(auto_error=False)
-_redis_client: Redis = from_url(settings.redis_url, decode_responses=True)
+# Connecting is retried for about two seconds: right after Redis restarts, its new pod takes a
+# moment to be reachable, and without this the first request in that moment fails with a 500.
+_redis_client: Redis = from_url(
+    settings.redis_url,
+    decode_responses=True,
+    retry=Retry(ExponentialBackoff(cap=0.5, base=0.05), 6),
+    retry_on_error=[RedisConnectionError, RedisTimeoutError, OSError],  # OSError: a refused connection
+)
 
 
 async def get_redis() -> AsyncGenerator[Redis, None]:

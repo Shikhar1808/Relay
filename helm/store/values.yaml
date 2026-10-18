@@ -14,6 +14,7 @@ store:
   adminEmail: admin@example.com
   timezone: Asia/Kolkata       # "today's orders" means the store's day; helm/platform's timezone must match
   currency: INR                # prices are shown in it; risk-mcp's limits assume it. Set when the store is first set up
+  country: "IN:DL"             # the store's country:state; checkout starts on it. Set when the store is first set up
 
 imagePullPolicy: IfNotPresent
 images:
