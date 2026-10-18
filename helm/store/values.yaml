@@ -1,0 +1,40 @@
+# One store. A second store is this chart installed again into store-<name>,
+# with its own subdomain and its own Secret.
+domain: 127.0.0.1.nip.io
+scheme: http
+tls:
+  enabled: false
+  clusterIssuer: letsencrypt-staging
+
+store:
+  subdomain: demo              # the storefront is <subdomain>.<domain>
+  name: Demo Store
+  adminUser: admin             # wp-admin's user; its password is WP_ADMIN_PASSWORD in the Secret
+  adminEmail: admin@example.com
+  timezone: Asia/Kolkata       # "today's orders" means the store's day
+
+imagePullPolicy: IfNotPresent
+images:
+  wooMcp: urumi-woo-mcp:0.1.0
+  fulfilmentMcp: urumi-fulfilment-mcp:0.1.0
+  wordpress: wordpress:7.1-php8.3-apache
+  wpCli: wordpress:cli-2.12-php8.3
+  mysql: mysql:8.4
+
+secretName: store-demo         # created with kubectl in step 2
+platformNamespace: urumi       # where the gateway and Postgres are
+storageClass: local-path
+mysqlStorage: 5Gi
+wordpressStorage: 2Gi
+# Two copies, so one can be killed in the demo while the other answers. Safe: the pods
+# keep nothing, and the database settles two writes for the same order.
+fulfilmentReplicas: 2
+
+traefik:
+  namespace: kube-system
+  podLabels:
+    app.kubernetes.io/name: traefik
+
+# The script wp-init runs: --set-file scripts.wpInit=woo-mcp/deploy/wp-init.sh
+scripts:
+  wpInit: ""

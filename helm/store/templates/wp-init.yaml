@@ -1,0 +1,52 @@
+# wp-init: installs WordPress and WooCommerce, and registers the REST key woo-mcp signs in
+# with (woo-mcp/deploy/wp-init.sh). Safe to repeat; it runs on every helm upgrade.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wp-init-script
+data:
+  wp-init.sh: |
+{{ required "pass --set-file scripts.wpInit=woo-mcp/deploy/wp-init.sh" .Values.scripts.wpInit | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wp-init-r{{ .Release.Revision }}
+spec:
+  backoffLimit: 10               # it fails until WordPress has copied its files and MySQL is up
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: { app: wp-init }
+    spec:
+      restartPolicy: OnFailure
+      # WordPress's own user (www-data, 33), so the files it writes stay WordPress's.
+      securityContext: { runAsUser: 33, runAsGroup: 33 }
+      containers:
+        - name: wp-init
+          image: {{ .Values.images.wpCli }}
+          command: ["sh", "/scripts/wp-init.sh"]
+          env:
+            - { name: WORDPRESS_DB_HOST, value: mysql }
+            - { name: WORDPRESS_DB_NAME, value: wordpress }
+            - { name: WORDPRESS_DB_USER, value: wordpress }
+            - { name: WORDPRESS_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: MYSQL_PASSWORD } } }
+            - { name: WP_URL, value: "{{ .Values.scheme }}://{{ .Values.store.subdomain }}.{{ .Values.domain }}" }
+            - { name: WP_TITLE, value: {{ .Values.store.name | quote }} }
+            - { name: WP_ADMIN_USER, value: {{ .Values.store.adminUser | quote }} }
+            - { name: WP_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WP_ADMIN_PASSWORD } } }
+            - { name: WP_ADMIN_EMAIL, value: {{ .Values.store.adminEmail | quote }} }
+            - { name: WP_TIMEZONE, value: {{ .Values.store.timezone | quote }} }
+            - { name: WOOCOMMERCE_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOOCOMMERCE_KEY } } }
+            - { name: WOOCOMMERCE_SECRET, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOOCOMMERCE_SECRET } } }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: data, mountPath: /var/www/html }
+            - { name: scripts, mountPath: /scripts, readOnly: true }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: wordpress-data }
+        - name: scripts
+          configMap: { name: wp-init-script }

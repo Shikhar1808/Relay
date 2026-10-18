@@ -1,0 +1,47 @@
+# db-init: makes the gateway's read-only role, the audit log's database, and fulfilment-mcp's
+# database and role (gateway/deploy/db-init.sh). Safe to run again; runs on every helm upgrade.
+
+# The script, as a file the Job mounts. Its text comes from --set-file scripts.dbInit=...;
+# "required" stops the install with this message when that was forgotten.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-init-script
+data:
+  db-init.sh: |
+{{ required "pass --set-file scripts.dbInit=gateway/deploy/db-init.sh" .Values.scripts.dbInit | indent 4 }}
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # A Job cannot be changed once it exists. A new name per release revision means every
+  # helm upgrade starts a fresh Job instead of failing on the old one.
+  name: db-init-r{{ .Release.Revision }}
+spec:
+  backoffLimit: 10               # it fails until the backend's migrations have made the tables
+  ttlSecondsAfterFinished: 3600  # the finished Job removes itself after an hour
+  template:
+    metadata:
+      labels: { app: db-init }
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: db-init
+          image: {{ .Values.images.postgres }}   # for its psql
+          command: ["sh", "/scripts/db-init.sh"]
+          env:
+            - { name: PGHOST, value: postgres }
+            - { name: PGUSER, value: platform }
+            - { name: PGDATABASE, value: platform }
+            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: POSTGRES_PASSWORD } } }
+            - { name: GATEWAY_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: GATEWAY_DB_PASSWORD } } }
+            - { name: FULFILMENT_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: FULFILMENT_DB_PASSWORD } } }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: scripts, mountPath: /scripts, readOnly: true }
+      volumes:
+        - name: scripts
+          configMap: { name: db-init-script }

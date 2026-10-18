@@ -1,0 +1,8 @@
+Urumi platform {{ .Chart.AppVersion }} is in the namespace {{ .Release.Namespace }} (revision {{ .Release.Revision }}).
+
+  Dashboard  {{ .Values.scheme }}://app.{{ .Values.domain }}
+  API        {{ .Values.scheme }}://api.{{ .Values.domain }}
+  Gateway    {{ .Values.scheme }}://mcp.{{ .Values.domain }}/mcp
+
+Watch it start:   kubectl -n {{ .Release.Namespace }} get pods -w
+db-init's log:    kubectl -n {{ .Release.Namespace }} logs job/db-init-r{{ .Release.Revision }}

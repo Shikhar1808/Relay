@@ -1,0 +1,57 @@
+# The store's own database. Like Postgres: a StatefulSet with a headless Service and a claim.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  labels: { app: mysql }
+spec:
+  clusterIP: None
+  selector: { app: mysql }
+  ports:
+    - { name: mysql, port: 3306 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels: { app: mysql }
+  template:
+    metadata:
+      labels: { app: mysql }
+    spec:
+      containers:
+        - name: mysql
+          image: {{ .Values.images.mysql }}
+          env:
+            - { name: MYSQL_DATABASE, value: wordpress }
+            - { name: MYSQL_USER, value: wordpress }
+            - { name: MYSQL_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: MYSQL_PASSWORD } } }
+            - { name: MYSQL_ROOT_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: MYSQL_ROOT_PASSWORD } } }
+          ports:
+            - { name: mysql, containerPort: 3306 }
+          # Over TCP on purpose: while MySQL sets itself up it listens only on its socket.
+          readinessProbe:
+            exec: { command: ["mysqladmin", "ping", "-h", "127.0.0.1", "--silent"] }
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["mysqladmin", "ping", "-h", "127.0.0.1", "--silent"] }
+            initialDelaySeconds: 60    # the first start sets up the data folder: give it time
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/mysql }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: {{ .Values.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.mysqlStorage }}

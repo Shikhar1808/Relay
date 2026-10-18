@@ -1,0 +1,56 @@
+# Server 3: shipping this store's orders. Its records are in the platform's Postgres, in the
+# database "fulfilment", which only its own role can open. Registered by hand as
+# http://fulfilment-mcp.<this namespace>.svc.cluster.local:8000/mcp, with this store's store_id.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fulfilment-mcp
+  labels: { app: fulfilment-mcp }
+spec:
+  selector: { app: fulfilment-mcp }
+  ports:
+    - { name: mcp, port: 8000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fulfilment-mcp
+spec:
+  replicas: {{ .Values.fulfilmentReplicas }}
+  selector:
+    matchLabels: { app: fulfilment-mcp }
+  template:
+    metadata:
+      labels: { app: fulfilment-mcp }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: fulfilment-mcp
+          image: {{ .Values.images.fulfilmentMcp }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - { name: mcp, containerPort: 8000 }
+          env:
+            - { name: FULFILMENT_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: FULFILMENT_DB_PASSWORD } } }
+            # Postgres is in the platform's namespace: its long name.
+            - { name: DATABASE_URL, value: "postgresql://fulfilment:$(FULFILMENT_DB_PASSWORD)@postgres.{{ .Values.platformNamespace }}.svc.cluster.local:5432/fulfilment" }
+            - { name: MCP_AUTH_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: FULFILMENT_MCP_TOKEN } } }
+            - { name: TIMEZONE, value: {{ .Values.store.timezone | quote }} }
+            - { name: ALLOWED_HOSTS, value: '["fulfilment-mcp.{{ .Release.Namespace }}.svc.cluster.local:*"]' }
+          readinessProbe:
+            httpGet: { path: /healthz, port: mcp }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: mcp }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

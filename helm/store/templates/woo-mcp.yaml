@@ -1,0 +1,55 @@
+# The store's WooCommerce MCP server. Only the gateway may call it (networkpolicies.yaml).
+# The backend registers it at startup as woo-<subdomain>, at its long name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: woo-mcp
+  labels: { app: woo-mcp }
+spec:
+  selector: { app: woo-mcp }
+  ports:
+    - { name: mcp, port: 8000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: woo-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: woo-mcp }
+  template:
+    metadata:
+      labels: { app: woo-mcp }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: woo-mcp
+          image: {{ .Values.images.wooMcp }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - { name: mcp, containerPort: 8000 }
+          env:
+            - { name: WOOCOMMERCE_URL, value: "http://wordpress" }
+            - { name: WOOCOMMERCE_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOOCOMMERCE_KEY } } }
+            - { name: WOOCOMMERCE_SECRET, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOOCOMMERCE_SECRET } } }
+            - { name: MCP_AUTH_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOO_MCP_TOKEN } } }
+            # The gateway is in another namespace and calls the long name: that is the Host header.
+            - { name: ALLOWED_HOSTS, value: '["woo-mcp.{{ .Release.Namespace }}.svc.cluster.local:*"]' }
+          readinessProbe:
+            httpGet: { path: /healthz, port: mcp }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: mcp }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

@@ -1,0 +1,49 @@
+# The dashboard (Next.js). It serves pages only; the browser calls the API itself, at API_URL.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels: { app: frontend }
+spec:
+  selector: { app: frontend }
+  ports:
+    - { name: http, port: 3000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000         # the image's user "node"; a name cannot be checked for non-root, a number can
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: frontend
+          image: {{ .Values.images.frontend }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - { name: http, containerPort: 3000 }
+          env:
+            # Read at request time by /runtime-config, so the same image works on every cluster.
+            - { name: API_URL, value: "{{ .Values.scheme }}://api.{{ .Values.domain }}" }
+          readinessProbe:
+            httpGet: { path: /runtime-config, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /runtime-config, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }

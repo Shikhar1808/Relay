@@ -1,0 +1,67 @@
+# The MCP gateway: /mcp on 8080 (public, through the Ingress), and a private port 9090
+# (health, and the audit log for the backend) that never gets an Ingress rule.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  labels: { app: gateway }
+spec:
+  selector: { app: gateway }
+  ports:
+    - { name: mcp, port: 8080 }
+    - { name: private, port: 9090 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 1                  # safe with more: it keeps no session, and the audit log takes a lock
+  selector:
+    matchLabels: { app: gateway }
+  template:
+    metadata:
+      labels: { app: gateway }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: gateway
+          image: {{ .Values.images.gateway }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - { name: mcp, containerPort: 8080 }
+            - { name: private, containerPort: 9090 }
+          env:
+            # The role db-init made: it can read the server list and add to the audit log, nothing else.
+            - { name: GATEWAY_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: GATEWAY_DB_PASSWORD } } }
+            - { name: PLATFORM_DATABASE_URL, value: "postgresql://gateway:$(GATEWAY_DB_PASSWORD)@postgres:5432/platform" }
+            - { name: LOGS_DATABASE_URL, value: "postgresql://gateway:$(GATEWAY_DB_PASSWORD)@postgres:5432/mcp_logs" }
+            - { name: AUDIT_HMAC_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: AUDIT_HMAC_KEY } } }
+            - { name: AUDIT_DETAIL, value: {{ .Values.auditDetail | quote }} }
+            - { name: REDIS_URL, value: "redis://redis:6379/0" }
+            - { name: RESOLVE_URL, value: "http://backend:8000/internal/auth/resolve" }
+            - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: INTERNAL_SERVICE_TOKEN } } }
+            - { name: GATEWAY_ENCRYPTION_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: GATEWAY_ENCRYPTION_KEY } } }
+            - { name: PUBLIC_BASE_URL, value: "{{ .Values.scheme }}://mcp.{{ .Values.domain }}" }
+            - { name: AUTH_ISSUER_URL, value: "{{ .Values.scheme }}://api.{{ .Values.domain }}" }
+            # The Host headers it answers to (anything else gets 421): its public name through
+            # the Ingress, and "gateway" for the chat agent, which calls http://gateway:8080/mcp.
+            - { name: ALLOWED_HOSTS, value: '["mcp.{{ .Values.domain }}", "mcp.{{ .Values.domain }}:*", "gateway:*"]' }
+            - { name: FORWARDED_ALLOW_IPS, value: {{ .Values.podCidr | quote }} }
+          readinessProbe:
+            httpGet: { path: /readyz, port: private }   # ready once the server list has been read
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: private }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

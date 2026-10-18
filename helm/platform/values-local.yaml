@@ -1,0 +1,10 @@
+# A laptop: plain http, names under nip.io. nip.io is a public DNS service where
+# anything.<address>.nip.io resolves to <address>, so it needs no setup.
+#
+#   k3d on Windows, browser on the same machine:  127.0.0.1.nip.io
+#   k3s on Pop!_OS, browser on Windows via Tailscale:  <the Pop!_OS Tailscale address>.nip.io,
+#   for example 100.101.102.103.nip.io (pass it with --set domain=..., Part 4).
+domain: 127.0.0.1.nip.io
+scheme: http
+tls:
+  enabled: false

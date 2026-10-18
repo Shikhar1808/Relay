@@ -1,0 +1,77 @@
+# The platform API (FastAPI): sign-in, team, stores, the server list, the Audit page, the chat agent.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels: { app: backend }
+spec:
+  selector: { app: backend }
+  ports:
+    - { name: http, port: 8000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 1                  # it applies the database migrations when it starts: one copy only,
+  strategy: { type: Recreate } # and never two at once, not even while an update swaps them
+  selector:
+    matchLabels: { app: backend }
+  template:
+    metadata:
+      labels: { app: backend }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001        # the image itself runs as root; this overrides it
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: backend
+          image: {{ .Values.images.backend }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - { name: http, containerPort: 8000 }
+          env:
+            # $(NAME) inside a value is replaced by an earlier variable of this list,
+            # so the password is read from the Secret and the URL is built here.
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: POSTGRES_PASSWORD } } }
+            - { name: DATABASE_URL, value: "postgresql+asyncpg://platform:$(POSTGRES_PASSWORD)@postgres:5432/platform" }
+            - { name: REDIS_URL, value: "redis://redis:6379/0" }
+            - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: JWT_SECRET } } }
+            - { name: GATEWAY_ENCRYPTION_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: GATEWAY_ENCRYPTION_KEY } } }
+            - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: INTERNAL_SERVICE_TOKEN } } }
+            - { name: GATEWAY_INTERNAL_URL, value: "http://gateway:9090" }
+            - { name: ADMIN_EMAIL, value: {{ .Values.adminEmail | quote }} }
+            - { name: ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: ADMIN_PASSWORD } } }
+            # optional: true - with no key in the Secret the variable is simply not set (emails go to the log).
+            - { name: SMTP_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: SMTP_PASSWORD, optional: true } } }
+            - { name: SMTP_FROM, value: {{ .Values.smtpFrom | quote }} }
+            # The public addresses: links in emails, and the only site whose pages may call this API.
+            - { name: APP_BASE_URL, value: "{{ .Values.scheme }}://app.{{ .Values.domain }}" }
+            - { name: FIRST_STORE_SUBDOMAIN, value: {{ .Values.firstStore.subdomain | quote }} }
+            - { name: FIRST_STORE_NAME, value: {{ .Values.firstStore.name | quote }} }
+            - { name: FIRST_STORE_URL, value: "{{ .Values.scheme }}://{{ .Values.firstStore.subdomain }}.{{ .Values.domain }}" }
+            # The store's server lives in the store's namespace, so its long name.
+            - { name: WOO_MCP_URL, value: "http://woo-mcp.{{ .Values.firstStore.namespace }}.svc.cluster.local:8000/mcp" }
+            - { name: WOO_MCP_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOO_MCP_TOKEN } } }
+            - { name: LLM_BASE_URL, value: {{ .Values.llmBaseUrl | quote }} }
+            - { name: LLM_API_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: GROQ_API_KEY, optional: true } } }
+            - { name: LLM_MODEL, value: {{ .Values.llmModel | quote }} }
+            - { name: STORE_TIMEZONE, value: {{ .Values.timezone | quote }} }
+            # Believe X-Forwarded-For only from Traefik's address range; otherwise every caller
+            # looks like Traefik, and all sign-ins share one rate limit.
+            - { name: FORWARDED_ALLOW_IPS, value: {{ .Values.podCidr | quote }} }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }

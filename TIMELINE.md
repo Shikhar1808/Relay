@@ -4,8 +4,8 @@ Progress against the plan in `extras/Urumi FDE — Full Implementation Guide.pdf
 and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on Kubernetes.pdf`.
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 17 Oct 2026
-- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. Servers 2 and 3 (Risk check, Fulfilment) are written and unit-tested, not yet registered or run live. The Servers page is built. Next: register both from it and run the chat flow, then Kubernetes
+- **Last updated:** 18 Oct 2026
+- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. The Servers page is built. On k3d (18 Oct) the two Helm charts (`helm/platform`, `helm/store`) run everything, and all three servers (woo-demo, risk, fulfilment) show Connected. NetworkPolicies are in and tested: only the gateway reaches the store MCP servers, and only fulfilment-mcp from a store namespace reaches Postgres. Next: `values-prod.yaml`
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -46,7 +46,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 ## Oct 15: Chat agent, LLM gateway, dashboard shell
 
-- [ ] LLM gateway in front of the model: Bifrost, chosen on 13 Oct over LiteLLM after measuring both (about a fifth of the memory). Until it is in, the chat reaches Groq directly; the model's address, key and name are settings (`LLM_BASE_URL`, `GROQ_API_KEY`, `LLM_MODEL`), so this is a change of settings
+- [ ] LLM gateway in front of the model: Bifrost, chosen on 13 Oct over LiteLLM after measuring both (about a fifth of the memory). Moved to the end on 17 Oct, after Kubernetes. Until it is in, the chat reaches Groq directly; the model's address, key and name are settings (`LLM_BASE_URL`, `GROQ_API_KEY`, `LLM_MODEL`), so this is a change of settings
 - [x] Short chat token issued and stored in Redis and the database: one per chat, opened by `POST /chat/message`, kept encrypted so the agent can present it on every message
 - [x] `/chat/message` calls the LLM with the gateway's tools: a LangGraph graph in `backend/app/agent` (seven steps, its state saved in Postgres), which calls the gateway with the signed-in user's chat token, so each call is in the audit log under that user, with the chat's id and the message's id (13 Oct)
   - The agent reads the hints the WooCommerce tools declare: a tool that does not say it only reads waits for the user's yes or no.
@@ -71,19 +71,19 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 ## Oct 17–18: Kubernetes core
 
-- [ ] Helm charts: Postgres, Redis, gateway/backend, dashboard, WordPress with MySQL
-- [ ] `values-local.yaml`
-- [ ] Readiness and liveness probes on every workload
-- [ ] Resource requests and limits on every container
-- [ ] All secrets in Kubernetes Secrets
+- [x] Helm charts: Postgres, Redis, gateway/backend, dashboard, WordPress with MySQL (`helm/platform` in namespace `urumi`, `helm/store` in `store-demo`; 18 Oct)
+- [x] `values-local.yaml`
+- [x] Readiness and liveness probes on every workload
+- [x] Resource requests and limits on every container (wp-init needs 512Mi: at 256Mi it was OOM-killed installing WooCommerce)
+- [x] All secrets in Kubernetes Secrets (`urumi-platform`, `store-demo`, made with kubectl from git-ignored env files)
 - [x] Container images for backend, frontend and gateway (non-root, health endpoints)
-- [ ] **Checkpoint:** everything running in local Kubernetes
+- [x] **Checkpoint:** everything running in local Kubernetes (k3d on Windows, 18 Oct)
 
 ## Oct 19–20: Ingress and WordPress init
 
-- [ ] NGINX Ingress controller, Ingress for storefront and dashboard. The dashboard and the API must end up on one site, or sign in breaks (the session cookie is `SameSite=Strict`): one host with the API under a path such as `/api`, or two subdomains of one domain (`app.urumi.local` and `api.urumi.local`). Not `dashboard.local` and `api.local`. Set `APP_BASE_URL` to the dashboard's address; never set `CORS_ORIGINS` to `"*"`, the backend refuses to start with it
+- [x] Traefik (k3s's own, instead of NGINX) with Ingresses for `app.`, `api.`, `mcp.` and the storefront `demo.` under `127.0.0.1.nip.io` (18 Oct). Ingress for storefront and dashboard. The dashboard and the API must end up on one site, or sign in breaks (the session cookie is `SameSite=Strict`): one host with the API under a path such as `/api`, or two subdomains of one domain (`app.urumi.local` and `api.urumi.local`). Not `dashboard.local` and `api.local`. Set `APP_BASE_URL` to the dashboard's address; never set `CORS_ORIGINS` to `"*"`, the backend refuses to start with it
 - [ ] Local domain instructions (`/etc/hosts`)
-- [ ] wp-cli init Job (Helm post-install hook)
+- [x] wp-cli init Job: a plain Job named per release revision, not a Helm hook (a hook would deadlock with `--wait`)
 - [ ] `values-prod.yaml`
 - [ ] **Checkpoint:** definition-of-done flow over Ingress with two users
 
@@ -110,7 +110,7 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - [ ] Provisioning state machine with retry and recovery
 - [ ] Creating or registering a store that already exists reconnects to it (`helm upgrade --install`): no second store, its pods started again if they are down, its volumes kept; only an explicit delete removes them
 - [ ] Automatic MCP registration per store
-- [ ] NetworkPolicies, ResourceQuota, LimitRange per store namespace
+- [ ] NetworkPolicies, ResourceQuota, LimitRange per store namespace (NetworkPolicies done 18 Oct, in `helm/store`; quota and limit range not yet)
 - [ ] Clean teardown
 
 ## Oct 24: Stand-out items

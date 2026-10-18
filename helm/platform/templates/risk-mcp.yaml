@@ -1,0 +1,53 @@
+# Server 2: risk scores for orders, from fixed rules. It holds no store data, so one copy
+# serves every store and it lives with the platform. Registered by hand as the admin,
+# as http://risk-mcp:8000/mcp: the gateway is in the same namespace, so the short name works
+# and the image's default ALLOWED_HOSTS covers it. It calls nothing, so it needs no internet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: risk-mcp
+  labels: { app: risk-mcp }
+spec:
+  selector: { app: risk-mcp }
+  ports:
+    - { name: mcp, port: 8000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: risk-mcp }
+  template:
+    metadata:
+      labels: { app: risk-mcp }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: risk-mcp
+          image: {{ .Values.images.riskMcp }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - { name: mcp, containerPort: 8000 }
+          env:
+            # Its only secret: the token the gateway presents.
+            - { name: MCP_AUTH_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: RISK_MCP_TOKEN } } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: mcp }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: mcp }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

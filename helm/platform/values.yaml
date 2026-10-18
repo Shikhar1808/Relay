@@ -1,0 +1,43 @@
+domain: 127.0.0.1.nip.io
+scheme: http
+
+tls: 
+  enabled: false
+  clusterIssuer: letsencrypt-staging
+
+imagePullPolicy: IfNotPresent
+images:
+  backend: urumi-backend:0.1.0
+  gateway: urumi-gateway:0.1.0
+  frontend: urumi-frontend:0.1.0
+  riskMcp: urumi-risk-mcp:0.1.0
+  postgres: postgres:18-alpine
+  redis: redis:7-alpine
+
+secretName: urumi-platform
+
+storageClass: local-path
+postgresStorage: 5Gi
+
+podCidr: 10.42.0.0/16
+
+traefik:
+  namespace: kube-system
+  podLabels:
+    app.kubernetes.io/name: traefik
+
+#plain settings
+adminEmail: admin@example.com
+smtpFrom: "Urumi <onboarding@resend.dev>"
+llmBaseUrl: https://api.groq.com/openai/v1
+llmModel: openai/gpt-oss-20b
+timezone: Asia/Kolkata
+auditDetail: standard
+
+firstStore: 
+  subdomain: demo
+  name: Demo Store
+  namespace: store-demo
+
+scripts:
+  dbInit: ""

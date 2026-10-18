@@ -1,0 +1,5 @@
+# Must match the platform's domain.
+domain: 127.0.0.1.nip.io
+scheme: http
+tls:
+  enabled: false

@@ -1,0 +1,75 @@
+# Inside one store's namespace. The assignment's rule: woo-mcp "is not reachable from
+# outside the cluster. Only the gateway can call it."
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# The storefront: from Traefik (shoppers, wp-admin), woo-mcp (the REST API) and wp-init.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wordpress
+spec:
+  podSelector:
+    matchLabels: { app: wordpress }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- include "urumi.fromTraefik" . | nindent 8 }}
+        - podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: [woo-mcp, wp-init] }
+      ports:
+        - { port: 80, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mysql
+spec:
+  podSelector:
+    matchLabels: { app: mysql }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: [wordpress, wp-init] }
+      ports:
+        - { port: 3306, protocol: TCP }
+---
+# Both MCP servers: from the gateway's pods in the platform's namespace, and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-servers-from-gateway
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [woo-mcp, fulfilment-mcp] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- include "urumi.fromGateway" . | nindent 8 }}
+      ports:
+        - { port: 8000, protocol: TCP }
+{{- if .Values.tls.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acme-solver
+spec:
+  podSelector:
+    matchLabels: { acme.cert-manager.io/http01-solver: "true" }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- include "urumi.fromTraefik" . | nindent 8 }}
+      ports:
+        - { port: 8089, protocol: TCP }
+{{- end }}
