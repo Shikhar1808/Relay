@@ -1,0 +1,209 @@
+# System design and tradeoffs
+
+How Urumi is built, why, and what that costs. Setup is in the [README](../README.md); the
+security side is in the [threat model](threat-model.md).
+
+## What runs where
+
+Two Helm charts, two kinds of namespace.
+
+| Namespace | Chart | Runs |
+|---|---|---|
+| `urumi` | `helm/platform` | dashboard (Next.js), platform API (FastAPI, with the chat agent), MCP gateway, risk-mcp, Postgres, Redis, the `db-init` Job |
+| `store-<subdomain>` (here `store-demo`) | `helm/store` | WordPress, MySQL, the `wp-init` Job, woo-mcp, fulfilment-mcp (two copies) |
+
+A second store is the store chart installed again into `store-<its subdomain>`, with its own
+Secret, volumes and Ingress host.
+
+**Public:** four names, all through Traefik, the Ingress controller k3s ships with: `app.`
+(dashboard), `api.` (platform API), `mcp.` (the gateway's `/mcp`) and the store's own name
+(storefront and wp-admin). Nothing else has an Ingress rule.
+
+**Internal only:** everything else, held there in three ways at once:
+
+1. No Ingress rule. The MCP servers, Postgres, Redis, MySQL and the gateway's private port
+   (9090: health, and the audit log for the API) have none.
+2. NetworkPolicies. Each namespace refuses every incoming connection by default, and each
+   allowed path is opened on its own: woo-mcp and fulfilment-mcp accept only the gateway's
+   pods, MySQL only WordPress and `wp-init`, Postgres only the API, the gateway, `db-init`, and
+   fulfilment-mcp from a namespace labelled as a store's. `helm test store-demo` checks the
+   first of these from a pod that is not the gateway.
+3. Their own checks. Every MCP server wants a bearer token and answers only to its own host
+   name; the API's `/internal` routes want a service token, and the Ingress refuses that path
+   for everyone (Traefik answers 403).
+
+## Architecture choices
+
+Each with its reason and its cost.
+
+- **Our own gateway, as its own service.** It is written with the MCP SDK's low-level server,
+  stateless (`stateless_http`), so any copy can answer any request. It imports nothing from
+  the platform API and reads the server list from Postgres through a database role that can
+  read that one table and nothing else.
+  *Cost:* we wrote and test the aggregation ourselves (an open-source gateway was tried in a
+  spike on 11 Oct and dropped).
+- **The gateway asks the API who every token belongs to.** On each request it calls
+  `/internal/auth/resolve`, which returns the user, the role and the user's stores. A revoked
+  key or a removed store assignment is refused on the very next request.
+  *Cost:* if the API is down, every MCP request is refused. A short cache cleared by a
+  revocation message would soften that; it is not built.
+- **Tool names are `<server slug>__<tool>`**, for example `woo-demo__list_orders`. Two servers
+  can both offer `list_orders`, and a person or a model can tell which store a tool acts on.
+  Slugs are unique, are lowercase letters, digits and single hyphens, and cannot change once
+  made, so a name always splits at its first `__`. A store's WooCommerce server is always
+  `woo-<subdomain>`.
+- **Servers belong to a store, or to every store.** A server with a store is listed and
+  callable only for that store's members (and the admin); risk-mcp has none and serves
+  everyone. The gateway takes a caller's stores from the API's answer and nothing else, never
+  from a tool argument or a header.
+- **Upstream credentials are encrypted.** The API stores each server's credential with
+  AES-256-GCM and never returns it; the gateway decrypts it to make a call. The key is in a
+  Secret, outside the database.
+- **The audit log has its own database** (`mcp_logs`). The gateway's role can add and read
+  rows only, a trigger refuses changes and deletions for every role (the owner too), and each
+  row carries an HMAC of the one before, so a changed or missing row shows. While the log
+  cannot record, the gateway refuses tool calls: nothing runs unrecorded.
+  *Cost:* an audit-database outage stops every tool call.
+- **WooCommerce through its REST API**, not WP-CLI or the database: stock, status rules and
+  hooks run as they do from wp-admin, and woo-mcp needs no access to WordPress's files or
+  database. The REST key belongs to a Shop manager, not the administrator. The key pair is
+  generated first and inserted by `wp-init`, because WooCommerce has no supported way to make
+  one without a person clicking in wp-admin.
+  *Cost:* the insert relies on WooCommerce's table layout, so WooCommerce is pinned (11.2.1).
+- **The chat agent's loop runs in the platform API** (LangGraph), not in an LLM proxy. The
+  model only says which tool it wants; the API makes every call through the gateway with the
+  user's chat token, so the agent can do nothing the user could not, and its calls are in the
+  audit log under the user. Having our code between the model and the tools is also what lets
+  it ask before a change. The state of each chat is saved in Postgres after every step, so a
+  pause for confirmation and a page reload work; chats are deleted one to two days after their
+  last use.
+  *Cost:* a loop of our own to keep, where an LLM proxy with MCP support could run the tools.
+- **The model is Groq's `openai/gpt-oss-20b`**, reached in the OpenAI chat format, so a
+  provider is three settings. *Cost:* Groq's free tier allows 8,000 tokens a minute, and a
+  question that needs four or more tool calls in a row can run out of it (measured 18 Oct:
+  about 8,500). An LLM gateway with a fallback provider is planned.
+- **Servers 2 and 3 are ours and about the store.** Risk check scores orders with fixed rules
+  and keeps nothing, so one copy serves every store. Fulfilment ships a store's orders and
+  keeps its records in the platform's Postgres, in a database and role of its own, so its pods
+  keep nothing and two copies run side by side.
+- **Two charts, not one.** The platform is installed once; the store chart once per store.
+  The setup scripts (`db-init.sh`, `wp-init.sh`) are passed in with `--set-file`, so Compose
+  and Kubernetes run the same files.
+- **Plain Jobs per revision, not Helm hooks.** `db-init-r<revision>` and `wp-init-r<revision>`
+  run on every install and upgrade and are safe to repeat. A hook would wait for every pod to
+  be ready first, and the gateway cannot be ready before `db-init` has made its role.
+- **Secrets are made outside the charts** with `kubectl`, from git-ignored files. The charts
+  only name them, so no secret is in a values file, in git or in Helm's release record.
+- **Local names under nip.io.** No hosts file, and the dashboard and the API share one site,
+  which the `SameSite=Strict` sign-in cookie needs.
+
+## How a tool call travels
+
+From Claude Code (or the chat agent) to the store and back, for `woo-demo__list_orders`:
+
+1. The client sends `tools/call` to `https://mcp.<domain>/mcp` with `Authorization: Bearer
+   umk_…`. Traefik passes it to a gateway pod.
+2. The gateway asks the API whose key it is, and gets the user and their stores, or a refusal
+   (`401`). A `Host` header it does not know gets `421`.
+3. The user's rate limit (120 calls a minute, in Redis) is checked.
+4. The name is split into `woo-demo` and `list_orders`. The server is looked up in the
+   gateway's in-memory list, and the user must have its store. An unknown tool and another
+   store's tool get the same answer, "Unknown tool", so nobody can map other stores' servers.
+5. The gateway opens an MCP session to `http://woo-mcp.store-demo.svc.cluster.local:8000/mcp`
+   with that server's stored credential. The client's own key is never sent on.
+6. woo-mcp checks its token and its host name, and calls WooCommerce's REST API at
+   `http://wordpress` with the store's key; WooCommerce reads MySQL.
+7. The answer comes back the same way. The gateway writes one audit row (user, server, tool,
+   time, duration, outcome, and the arguments with secret-looking fields removed) and returns
+   the result.
+
+## Tool aggregation, routing and failure handling
+
+**Listing.** A background loop in the gateway reads the enabled servers from Postgres and asks
+each one for its tools, all at once, each with a 5-second limit. It does this every 30 seconds,
+and at once when the API publishes `upstreams:changed` in Redis after an admin's change. The
+result is swapped in as one snapshot. `tools/list` only reads that snapshot, so a slow or dead
+server can never slow it down: a server that did not answer at the last check is simply not
+listed. Each tool keeps its own description and hints (read-only, destructive), renamed with
+its server's slug.
+
+**Calling.** A call goes to the server named in the tool, with a 30-second limit. What the
+caller gets:
+
+| What happened | Caller sees | Audit outcome |
+|---|---|---|
+| The tool answered | its result | `ok` (INFO), or `error` (WARNING) if the tool reported an error |
+| No such tool, or another store's | "Unknown tool" | `denied` (WARNING) |
+| No answer in 30 s | "<server> did not answer within 30 seconds" | `timeout` (ERROR) |
+| Refused, crashed, or a bad answer | "<server> is unreachable" | `unreachable` (ERROR) |
+| Over the user's rate limit | "Rate limit: at most 120 tool calls a minute" | `rate_limited` (WARNING, once a minute) |
+
+**When a server goes down,** the next check marks it Unreachable on the Servers page, drops its
+tools from every list, and writes one audit row (and one more when it comes back). The other
+servers are untouched. **When an admin disables or removes one,** its tools are gone on the
+next request: the API's change message makes the gateway re-read at once.
+
+**Other failures:**
+
+| What fails | What happens |
+|---|---|
+| The platform API | The gateway refuses every request, since it cannot tell who is calling |
+| Redis | The gateway keeps serving without rate limits and keeps its 30-second timer; the API's first request after Redis restarts waits for it (up to about 2 seconds) instead of failing |
+| The audit database | Tool calls are refused, and admin changes to the server list too |
+| Postgres, briefly | The gateway keeps its last good snapshot and tries again |
+| A pod | Its Deployment or StatefulSet starts a new one. fulfilment-mcp runs two copies, so one can die without a failed call |
+| The chat model | The chat answers "the chat model is not available right now", never a 500 |
+
+## Kubernetes
+
+| Workload | Kind | Ready when | Requests / memory limit | Disk |
+|---|---|---|---|---|
+| Postgres | StatefulSet | `pg_isready` | 100m, 128Mi / 512Mi | 5Gi |
+| Redis | StatefulSet | `redis-cli ping` | 50m, 32Mi / 128Mi | 1Gi, append-only file |
+| Platform API | Deployment, `Recreate` | `/health` | 100m, 256Mi / 512Mi | |
+| Gateway | Deployment | `/readyz` on 9090: the server list has been read | 100m, 96Mi / 256Mi | |
+| Dashboard | Deployment | `/runtime-config` | 50m, 96Mi / 256Mi | |
+| risk-mcp, woo-mcp, fulfilment-mcp (×2) | Deployment | `/healthz` | 50m, 96Mi / 256Mi each | |
+| MySQL | StatefulSet | `mysqladmin ping`, with a startup check of up to 5 minutes | 100m, 512Mi / 1Gi | 5Gi |
+| WordPress | Deployment, `Recreate` | `/wp-login.php` | 100m, 256Mi / 512Mi | 2Gi, kept on uninstall |
+| `db-init`, `wp-init` | Job per revision | | 50m, 32Mi / 128Mi; 50m, 128Mi / 512Mi | |
+
+Every long-running workload has a readiness and a liveness check. There are memory limits and no
+CPU limits, so a busy pod is slowed rather than killed. Our six images run as user 10001 (the
+dashboard as `node`, 1000), with a read-only root filesystem where the image allows it, all
+capabilities dropped, the default seccomp profile, and no Kubernetes API token mounted, since
+nothing here talks to the Kubernetes API.
+
+**Start order without `depends_on`.** Every pod starts at once and retries. The API's
+migrations fail until Postgres answers, so it restarts once or twice. `db-init` fails until those
+migrations have made the tables; the gateway is not ready until `db-init` has made its role.
+`wp-init` waits in a loop until MySQL answers, then installs WordPress and WooCommerce once.
+
+## What changes for production
+
+The same charts, images and Secret names. Only `values-prod.yaml` and the cluster around them
+change.
+
+| | Local (k3d) | VPS (k3s) |
+|---|---|---|
+| DNS | `*.127.0.0.1.nip.io`, nothing to set up | one wildcard `A` record for `*.shikharsaxena.space`, so every later store needs no new record |
+| Ingress | Traefik, plain http | Traefik with TLS: cert-manager gets certificates from Let's Encrypt (staging first, then prod), `http://` gets a permanent redirect to `https://`, and a NetworkPolicy lets Traefik reach cert-manager's challenge pod |
+| Client addresses | every visitor looks like the node (`10.42.0.1`) | Traefik's Service set to `externalTrafficPolicy: Local`, so the audit log and the sign-in limit see real addresses |
+| Storage class | `local-path` (k3s's own), on the laptop's disk | `local-path` on the server's disk: fine for one node, with no copy elsewhere. A cloud cluster would name its block storage in `storageClass`, and backups are not built |
+| Secrets | random values from `scripts/make_k8s_secrets.py` | new values from the same script, never the laptop's; the same two `kubectl create secret` commands. k3s can also encrypt Secrets at rest (`--secrets-encryption`) |
+| Images | `k3d image import` | `docker save` and `k3s ctr images import`, or a registry named in `images:` |
+| Sign-in cookie | not `Secure` (plain http) | `Secure`, decided by the dashboard's address being https |
+| Email | written to the API's log, or Resend's test sender | Resend, from an address on the verified domain (`smtpFrom`) |
+| Kubernetes API | local | reached through an SSH tunnel; port 6443 stays closed |
+
+## Known limits
+
+- **One fulfilment database for every store.** Its table is keyed by the store's own order
+  number, so a second store's fulfilment server would share it. One database per store is
+  needed before more stores get fulfilment (marked in `fulfilment-mcp/README.md`).
+- **Stores are installed by hand.** The dashboard keeps store records, but installing the store
+  chart from the dashboard (the multi-store bonus) is not built.
+- **One copy of Postgres and of MySQL**, with no backups.
+- **The chat on Groq's free tier** can run out of tokens on long questions (above).
+- **No OAuth for members, no per-role tool permissions, no guard on the address an admin
+  registers** (the last is in the threat model).

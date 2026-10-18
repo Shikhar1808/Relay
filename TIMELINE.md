@@ -65,6 +65,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
   - Risk check (`risk-mcp/`): `score_orders` scores a batch of orders with five fixed rules (total, bulk quantity, throwaway email domain, cash on delivery on a large order, one email on several orders) and gives a level and the reasons. Reads nothing, stores nothing, calls nothing. Shared by every store.
   - Fulfilment (`fulfilment-mcp/`): `start_fulfilment`, `advance_fulfilment` (packing → shipped → delivered, never back, a batch all or nothing), `list_fulfilments`. Records in Postgres in a database and role of their own (`gateway/deploy/db-init.sh`), so the pod keeps nothing. One per store.
   - Chat flow to check: "check today's orders, put the risky ones on hold and ship the rest" (three servers in one answer), then "mark them delivered" (the orders end `completed` in the store).
+    Tried 18 Oct on k3d: the chat lists and scores the orders, then Groq's free tier refuses the third model call (8,000 tokens a minute; this question needs about 8,500). Replayed with pauses, the model's first change was the right one (the risky order on hold). Left as is on purpose; Bifrost with a fallback provider is the planned way past the limit.
   - Product photos (Pexels, then Pixabay) was built first and dropped the same day: neither would issue the user an API key. `woo-mcp`'s `image_url` went with it, on purpose: WordPress downloads whatever address it is given onto the public shop.
 - [x] API key revocation rejected at the gateway
 - [x] Disabling an upstream removes its tools
@@ -82,7 +83,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 ## Oct 19–20: Ingress and WordPress init
 
 - [x] Traefik (k3s's own, instead of NGINX) with Ingresses for `app.`, `api.`, `mcp.` and the storefront `demo.` under `127.0.0.1.nip.io` (18 Oct). Ingress for storefront and dashboard. The dashboard and the API must end up on one site, or sign in breaks (the session cookie is `SameSite=Strict`): one host with the API under a path such as `/api`, or two subdomains of one domain (`app.urumi.local` and `api.urumi.local`). Not `dashboard.local` and `api.local`. Set `APP_BASE_URL` to the dashboard's address; never set `CORS_ORIGINS` to `"*"`, the backend refuses to start with it
-- [ ] Local domain instructions (`/etc/hosts`)
+- [x] Local domain instructions: names under nip.io, no hosts file needed (README, "Local domain approach", with hosts-file lines for working offline; 18 Oct)
 - [x] wp-cli init Job: a plain Job named per release revision, not a Helm hook (a hook would deadlock with `--wait`)
 - [x] `values-prod.yaml` (both charts: `shikharsaxena.space`, https, cert-manager with Let's Encrypt staging first; rendered and dry-run only, 18 Oct)
 - [x] **Checkpoint:** definition-of-done flow over Ingress with two users (18 Oct on k3d, by script: the admin's chat created a product and found its order, a member's own key listed all 11 tools and called woo-demo and risk, disabling risk hid its tools from both, the revoked key got 401, every call in the audit log under the right user. The storefront order went through the shop's own checkout API and showed in WooCommerce admin. Still by hand for the video: clicking through checkout, and Claude Code as the external client)
@@ -98,9 +99,9 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 
-- [ ] Root `README.md`: local setup, VPS setup, placing an order, connecting an MCP client, using chat
-- [ ] System design and tradeoffs note
-- [ ] Threat model note
+- [x] Root `README.md`: local setup, VPS setup, placing an order, connecting an MCP client, using chat, upgrade and rollback, the bonus and stand-out list (18 Oct; with `scripts/make_k8s_secrets.py` and `helm/cluster-issuers.yaml`, which it uses)
+- [x] System design and tradeoffs note: `docs/system-design.md` (18 Oct)
+- [x] Threat model note: `docs/threat-model.md` (18 Oct)
 
 ## Oct 22–23: Bonus, multi-store provisioning
 

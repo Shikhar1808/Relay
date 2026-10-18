@@ -246,5 +246,5 @@ it as unreachable.
 
 ## Not built yet
 
-Log retention, OAuth for members, the Helm chart.
-See `TIMELINE.md`.
+Log retention, OAuth for members. The gateway's Kubernetes setup is in `helm/platform`
+(see the root README). See `TIMELINE.md`.
