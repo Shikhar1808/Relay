@@ -23,6 +23,7 @@ spec:
     metadata:
       labels: { app: fulfilment-mcp }
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -34,10 +35,10 @@ spec:
           ports:
             - { name: mcp, containerPort: 8000 }
           env:
-            - { name: FULFILMENT_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: FULFILMENT_DB_PASSWORD } } }
+            - { name: FULFILMENT_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: FULFILMENT_DB_PASSWORD } } }
             # Postgres is in the platform's namespace: its long name.
             - { name: DATABASE_URL, value: "postgresql://fulfilment:$(FULFILMENT_DB_PASSWORD)@postgres.{{ .Values.platformNamespace }}.svc.cluster.local:5432/fulfilment" }
-            - { name: MCP_AUTH_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: FULFILMENT_MCP_TOKEN } } }
+            - { name: MCP_AUTH_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: FULFILMENT_MCP_TOKEN } } }
             - { name: TIMEZONE, value: {{ .Values.store.timezone | quote }} }
             - { name: ALLOWED_HOSTS, value: '["fulfilment-mcp.{{ .Release.Namespace }}.svc.cluster.local:*"]' }
           readinessProbe:

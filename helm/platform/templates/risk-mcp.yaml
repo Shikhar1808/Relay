@@ -24,6 +24,7 @@ spec:
     metadata:
       labels: { app: risk-mcp }
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

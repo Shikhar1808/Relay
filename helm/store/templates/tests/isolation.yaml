@@ -1,0 +1,45 @@
+# "helm test <release> -n <namespace>": proves this store's MCP servers refuse a pod that is not
+# the gateway (networkpolicies.yaml). Helm runs it only on "helm test", never on install.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: isolation-test
+  labels: { app: isolation-test }
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+    - name: test
+      image: {{ .Values.images.wooMcp }}   # any image with Python
+      command:
+        - python
+        - -c
+        - |
+          import socket, sys, time
+          # A new pod is refused by everyone for about its first second, whatever the rules say:
+          # testing at once would pass even with a broken policy.
+          time.sleep(3)
+          failed = False
+          for host in ("woo-mcp", "fulfilment-mcp"):
+              socket.getaddrinfo(host, 8000)  # a missing Service fails the test, it does not pass it
+              try:
+                  socket.create_connection((host, 8000), timeout=5).close()
+                  print(f"FAIL: {host} answered a pod that is not the gateway")
+                  failed = True
+              except OSError as error:
+                  print(f"ok: {host} refused it ({type(error).__name__})")
+          sys.exit(1 if failed else 0)
+      resources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits: { memory: 64Mi }
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: [ALL] }

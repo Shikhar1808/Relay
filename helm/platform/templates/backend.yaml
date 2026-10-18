@@ -22,6 +22,7 @@ spec:
     metadata:
       labels: { app: backend }
     spec:
+      automountServiceAccountToken: false   # nothing here talks to the Kubernetes API
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001        # the image itself runs as root; this overrides it
@@ -52,8 +53,8 @@ spec:
             - { name: FIRST_STORE_SUBDOMAIN, value: {{ .Values.firstStore.subdomain | quote }} }
             - { name: FIRST_STORE_NAME, value: {{ .Values.firstStore.name | quote }} }
             - { name: FIRST_STORE_URL, value: "{{ .Values.scheme }}://{{ .Values.firstStore.subdomain }}.{{ .Values.domain }}" }
-            # The store's server lives in the store's namespace, so its long name.
-            - { name: WOO_MCP_URL, value: "http://woo-mcp.{{ .Values.firstStore.namespace }}.svc.cluster.local:8000/mcp" }
+            # The store's server lives in the store's namespace, store-<subdomain>, so its long name.
+            - { name: WOO_MCP_URL, value: "http://woo-mcp.store-{{ .Values.firstStore.subdomain }}.svc.cluster.local:8000/mcp" }
             - { name: WOO_MCP_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOO_MCP_TOKEN } } }
             - { name: LLM_BASE_URL, value: {{ .Values.llmBaseUrl | quote }} }
             - { name: LLM_API_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: GROQ_API_KEY, optional: true } } }

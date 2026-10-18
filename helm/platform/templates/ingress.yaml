@@ -42,6 +42,41 @@ spec:
             pathType: Prefix
             backend:
               service: { name: gateway, port: { number: 8080 } }   # 8080 only: 9090 is never public
+---
+# /internal is the gateway's way into the backend, inside the cluster (http://backend:8000).
+# Through the Ingress it is refused for everyone: Traefik answers 403 before the backend sees it.
+# The longer path wins over "/" above. The tls part matches the rule above, so https is caught too.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-internal
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-refuse-all@kubernetescrd
+spec:
+  ingressClassName: traefik
+  {{- if .Values.tls.enabled }}
+  tls:
+    - secretName: platform-tls
+      hosts:
+        - api.{{ .Values.domain }}
+  {{- end }}
+  rules:
+    - host: api.{{ .Values.domain }}
+      http:
+        paths:
+          - path: /internal
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { number: 8000 } }
+---
+# A Traefik object: let in only 127.0.0.1, which no request through the Ingress comes from.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: refuse-all
+spec:
+  ipAllowList:
+    sourceRange: ["127.0.0.1/32"]
 {{- if .Values.tls.enabled }}
 ---
 # A Traefik object (not standard Kubernetes): answer http:// with a permanent redirect to https://.

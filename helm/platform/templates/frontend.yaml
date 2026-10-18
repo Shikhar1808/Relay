@@ -21,6 +21,7 @@ spec:
     metadata:
       labels: { app: frontend }
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000         # the image's user "node"; a name cannot be checked for non-root, a number can

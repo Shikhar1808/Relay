@@ -22,6 +22,7 @@ spec:
     metadata:
       labels: { app: woo-mcp }
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -34,9 +35,9 @@ spec:
             - { name: mcp, containerPort: 8000 }
           env:
             - { name: WOOCOMMERCE_URL, value: "http://wordpress" }
-            - { name: WOOCOMMERCE_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOOCOMMERCE_KEY } } }
-            - { name: WOOCOMMERCE_SECRET, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOOCOMMERCE_SECRET } } }
-            - { name: MCP_AUTH_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOO_MCP_TOKEN } } }
+            - { name: WOOCOMMERCE_KEY, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: WOOCOMMERCE_KEY } } }
+            - { name: WOOCOMMERCE_SECRET, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: WOOCOMMERCE_SECRET } } }
+            - { name: MCP_AUTH_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: WOO_MCP_TOKEN } } }
             # The gateway is in another namespace and calls the long name: that is the Host header.
             - { name: ALLOWED_HOSTS, value: '["woo-mcp.{{ .Release.Namespace }}.svc.cluster.local:*"]' }
           readinessProbe:

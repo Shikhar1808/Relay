@@ -31,13 +31,13 @@ adminEmail: admin@example.com
 smtpFrom: "Urumi <onboarding@resend.dev>"
 llmBaseUrl: https://api.groq.com/openai/v1
 llmModel: openai/gpt-oss-20b
-timezone: Asia/Kolkata
+timezone: Asia/Kolkata         # the first store's day, for the chat: must match store.timezone in helm/store
 auditDetail: standard
 
-firstStore: 
+# The first store, installed with helm/store into the namespace store-<subdomain>.
+firstStore:
   subdomain: demo
   name: Demo Store
-  namespace: store-demo
 
 scripts:
   dbInit: ""

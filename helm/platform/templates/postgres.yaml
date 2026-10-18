@@ -22,6 +22,7 @@ spec:
     metadata:
       labels: { app: postgres }
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: postgres
           image: {{ .Values.images.postgres }}

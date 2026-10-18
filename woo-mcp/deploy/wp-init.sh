@@ -6,9 +6,24 @@
 #
 # Needs the WORDPRESS_DB_* variables of the wordpress image (its wp-config.php reads them),
 # and WP_URL, WP_TITLE, WP_ADMIN_USER, WP_ADMIN_PASSWORD, WP_ADMIN_EMAIL,
-# WOOCOMMERCE_KEY, WOOCOMMERCE_SECRET. Optional: WP_TIMEZONE.
+# WOOCOMMERCE_KEY, WOOCOMMERCE_SECRET. Optional: WP_TIMEZONE, WP_CURRENCY.
 set -eu
 export WP_CLI_CACHE_DIR=/tmp/wp-cli-cache  # this runs as WordPress's uid, which has no home directory here
+
+# Wait until the database answers. MySQL may still be starting, and on Kubernetes a new pod is
+# refused for about its first second while the NetworkPolicies catch up. Without this, a refused
+# first call reads as "WordPress is not installed" below. It connects the way WordPress does (PHP's
+# mysqli): this image's mysql program, which "wp db" uses, rejects MySQL's self-signed certificate.
+# After 20 tries it gives up, and the Job tries again. (Compose starts it only once MySQL is healthy.)
+# shortcut: a WORDPRESS_DB_HOST of host:port is not split here; ours is always a bare name.
+tries=0
+until php -r 'mysqli_report(MYSQLI_REPORT_OFF); $db = mysqli_init(); mysqli_options($db, MYSQLI_OPT_CONNECT_TIMEOUT, 5);
+    exit(@mysqli_real_connect($db, getenv("WORDPRESS_DB_HOST"), getenv("WORDPRESS_DB_USER"), getenv("WORDPRESS_DB_PASSWORD"), getenv("WORDPRESS_DB_NAME")) ? 0 : 1);'; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 20 ] || { echo "wp-init: the database did not answer" >&2; exit 1; }
+    echo "wp-init: waiting for the database"
+    sleep 2
+done
 
 if ! wp core is-installed; then
     # Installed with a password wp-cli makes up (its output, which prints it, is dropped);
@@ -22,7 +37,10 @@ fi
 wp eval '$admin = get_user_by("login", getenv("WP_ADMIN_USER"));
 if ($admin && !wp_check_password(getenv("WP_ADMIN_PASSWORD"), $admin->user_pass, $admin->ID)) {
     wp_set_password(getenv("WP_ADMIN_PASSWORD"), $admin->ID);
-}'
+}
+// The made-up install password is never used (the one above replaces it), so its "change your
+// password" notice goes too: WordPress clears it only for a change made on the profile page.
+if ($admin) { delete_user_meta($admin->ID, "default_password_nag"); }'
 # Pinned: the REST key below is written straight into WooCommerce's own table, whose layout a later release may change.
 wp plugin is-active woocommerce || wp plugin install woocommerce --version=11.2.1 --activate
 # /wp-json/, which the MCP server calls, needs pretty permalinks (the wordpress image already ships
@@ -41,6 +59,8 @@ if [ "$(wp option get urumi_store_set_up 2>/dev/null)" != yes ]; then
     wp option update woocommerce_onboarding_profile '{"skipped":true}' --format=json
     # "Today's orders" means the store's day: see list_orders in app/main.py.
     [ -z "${WP_TIMEZONE:-}" ] || wp option update timezone_string "$WP_TIMEZONE"
+    # Prices are shown in it, and risk-mcp's limits are amounts in it. WooCommerce's default is USD.
+    [ -z "${WP_CURRENCY:-}" ] || wp option update woocommerce_currency "$WP_CURRENCY"
 
     wp wc tool run install_pages --user="$WP_ADMIN_USER"  # shop, cart, checkout, my account
     wp wc payment_gateway update cod --enabled=true --user="$WP_ADMIN_USER"

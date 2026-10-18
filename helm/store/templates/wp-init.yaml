@@ -20,25 +20,33 @@ spec:
       labels: { app: wp-init }
     spec:
       restartPolicy: OnFailure
-      # WordPress's own user (www-data, 33), so the files it writes stay WordPress's.
-      securityContext: { runAsUser: 33, runAsGroup: 33 }
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33            # WordPress's own user (www-data), so the files it writes stay WordPress's
+        runAsGroup: 33
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: wp-init
           image: {{ .Values.images.wpCli }}
           command: ["sh", "/scripts/wp-init.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
           env:
             - { name: WORDPRESS_DB_HOST, value: mysql }
             - { name: WORDPRESS_DB_NAME, value: wordpress }
             - { name: WORDPRESS_DB_USER, value: wordpress }
-            - { name: WORDPRESS_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: MYSQL_PASSWORD } } }
+            - { name: WORDPRESS_DB_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: MYSQL_PASSWORD } } }
             - { name: WP_URL, value: "{{ .Values.scheme }}://{{ .Values.store.subdomain }}.{{ .Values.domain }}" }
             - { name: WP_TITLE, value: {{ .Values.store.name | quote }} }
             - { name: WP_ADMIN_USER, value: {{ .Values.store.adminUser | quote }} }
-            - { name: WP_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WP_ADMIN_PASSWORD } } }
+            - { name: WP_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: WP_ADMIN_PASSWORD } } }
             - { name: WP_ADMIN_EMAIL, value: {{ .Values.store.adminEmail | quote }} }
             - { name: WP_TIMEZONE, value: {{ .Values.store.timezone | quote }} }
-            - { name: WOOCOMMERCE_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOOCOMMERCE_KEY } } }
-            - { name: WOOCOMMERCE_SECRET, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: WOOCOMMERCE_SECRET } } }
+            - { name: WP_CURRENCY, value: {{ .Values.store.currency | quote }} }
+            - { name: WOOCOMMERCE_KEY, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: WOOCOMMERCE_KEY } } }
+            - { name: WOOCOMMERCE_SECRET, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: WOOCOMMERCE_SECRET } } }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits: { memory: 512Mi }

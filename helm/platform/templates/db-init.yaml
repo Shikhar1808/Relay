@@ -26,10 +26,18 @@ spec:
       labels: { app: db-init }
     spec:
       restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70            # the postgres image's own user: psql needs nothing root can do
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: db-init
           image: {{ .Values.images.postgres }}   # for its psql
           command: ["sh", "/scripts/db-init.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
           env:
             - { name: PGHOST, value: postgres }
             - { name: PGUSER, value: platform }

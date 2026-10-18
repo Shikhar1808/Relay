@@ -23,6 +23,7 @@ spec:
     metadata:
       labels: { app: gateway }
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

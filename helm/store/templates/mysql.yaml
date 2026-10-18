@@ -23,23 +23,29 @@ spec:
     metadata:
       labels: { app: mysql }
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: mysql
           image: {{ .Values.images.mysql }}
           env:
             - { name: MYSQL_DATABASE, value: wordpress }
             - { name: MYSQL_USER, value: wordpress }
-            - { name: MYSQL_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: MYSQL_PASSWORD } } }
-            - { name: MYSQL_ROOT_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: MYSQL_ROOT_PASSWORD } } }
+            - { name: MYSQL_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: MYSQL_PASSWORD } } }
+            - { name: MYSQL_ROOT_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Release.Namespace }}, key: MYSQL_ROOT_PASSWORD } } }
           ports:
             - { name: mysql, containerPort: 3306 }
           # Over TCP on purpose: while MySQL sets itself up it listens only on its socket.
+          # The liveness check waits for the startup check (up to 5 minutes), so it never kills
+          # MySQL halfway through its first setup, which would leave the data folder half made.
+          startupProbe:
+            exec: { command: ["mysqladmin", "ping", "-h", "127.0.0.1", "--silent"] }
+            periodSeconds: 10
+            failureThreshold: 30
           readinessProbe:
             exec: { command: ["mysqladmin", "ping", "-h", "127.0.0.1", "--silent"] }
             periodSeconds: 5
           livenessProbe:
             exec: { command: ["mysqladmin", "ping", "-h", "127.0.0.1", "--silent"] }
-            initialDelaySeconds: 60    # the first start sets up the data folder: give it time
             periodSeconds: 15
           resources:
             requests: { cpu: 100m, memory: 512Mi }

@@ -1,5 +1,6 @@
-# One store. A second store is this chart installed again into store-<name>,
-# with its own subdomain and its own Secret.
+# One store, installed into the namespace store-<subdomain> (the platform finds its woo-mcp there).
+# A second store is this chart installed again, with its own subdomain. Its Secret has the
+# same name as its namespace, made with kubectl from a git-ignored env file before the install.
 domain: 127.0.0.1.nip.io
 scheme: http
 tls:
@@ -11,7 +12,8 @@ store:
   name: Demo Store
   adminUser: admin             # wp-admin's user; its password is WP_ADMIN_PASSWORD in the Secret
   adminEmail: admin@example.com
-  timezone: Asia/Kolkata       # "today's orders" means the store's day
+  timezone: Asia/Kolkata       # "today's orders" means the store's day; helm/platform's timezone must match
+  currency: INR                # prices are shown in it; risk-mcp's limits assume it. Set when the store is first set up
 
 imagePullPolicy: IfNotPresent
 images:
@@ -21,7 +23,6 @@ images:
   wpCli: wordpress:cli-2.12-php8.3
   mysql: mysql:8.4
 
-secretName: store-demo         # created with kubectl in step 2
 platformNamespace: urumi       # where the gateway and Postgres are
 storageClass: local-path
 mysqlStorage: 5Gi

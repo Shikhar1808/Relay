@@ -8,7 +8,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
 ---
-# The storefront: from Traefik (shoppers, wp-admin), woo-mcp (the REST API) and wp-init.
+# The storefront: from Traefik (shoppers, wp-admin) and woo-mcp (the REST API). Not wp-init:
+# it works on WordPress's files and database directly and never calls WordPress over HTTP.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -21,8 +22,7 @@ spec:
     - from:
         {{- include "urumi.fromTraefik" . | nindent 8 }}
         - podSelector:
-            matchExpressions:
-              - { key: app, operator: In, values: [woo-mcp, wp-init] }
+            matchLabels: { app: woo-mcp }
       ports:
         - { port: 80, protocol: TCP }
 ---

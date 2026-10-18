@@ -1,3 +1,6 @@
+# Redis: rate limits, sign-outs, each server's status, "the server list changed" messages.
+# It has a disk so a restart keeps the sign-outs: without one, a signed-out session works again
+# until it expires. appendonly writes every change to that disk within a second.
 apiVersion: v1
 kind: Service
 metadata:
@@ -9,10 +12,11 @@ spec:
     - { name: redis, port: 6379 }
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis
 spec:
+  serviceName: redis
   replicas: 1
   selector:
     matchLabels: { app: redis }
@@ -20,9 +24,11 @@ spec:
     metadata:
       labels: { app: redis }
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: redis
           image: {{ .Values.images.redis }}
+          args: ["--appendonly", "yes"]
           ports:
             - { name: redis, containerPort: 6379 }
           readinessProbe:
@@ -35,3 +41,14 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 32Mi }
             limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: {{ .Values.storageClass }}
+        resources:
+          requests:
+            storage: 1Gi
