@@ -1,0 +1,5 @@
+domain: shikharsaxena.space
+scheme: https
+tls:
+  enabled: true
+  clusterIssuer: letsencrypt-staging   # letsencrypt-prod once the test certificate works

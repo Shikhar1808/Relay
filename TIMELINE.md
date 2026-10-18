@@ -5,7 +5,7 @@ and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on 
 
 - **Deadline:** 26 Oct 2026
 - **Last updated:** 18 Oct 2026
-- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. The Servers page is built. On k3d (18 Oct) the two Helm charts (`helm/platform`, `helm/store`) run everything, and all three servers (woo-demo, risk, fulfilment) show Connected. NetworkPolicies are in and tested: only the gateway reaches the store MCP servers, and only fulfilment-mcp from a store namespace reaches Postgres. Next: `values-prod.yaml`
+- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. The Servers page is built. On k3d (18 Oct) the two Helm charts (`helm/platform`, `helm/store`) run everything, and all three servers (woo-demo, risk, fulfilment) show Connected. NetworkPolicies are in and tested: only the gateway reaches the store MCP servers, and only fulfilment-mcp from a store namespace reaches Postgres. `values-prod.yaml` is written for the VPS. Next: the VPS (k3s, DNS, cert-manager)
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -84,14 +84,14 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [x] Traefik (k3s's own, instead of NGINX) with Ingresses for `app.`, `api.`, `mcp.` and the storefront `demo.` under `127.0.0.1.nip.io` (18 Oct). Ingress for storefront and dashboard. The dashboard and the API must end up on one site, or sign in breaks (the session cookie is `SameSite=Strict`): one host with the API under a path such as `/api`, or two subdomains of one domain (`app.urumi.local` and `api.urumi.local`). Not `dashboard.local` and `api.local`. Set `APP_BASE_URL` to the dashboard's address; never set `CORS_ORIGINS` to `"*"`, the backend refuses to start with it
 - [ ] Local domain instructions (`/etc/hosts`)
 - [x] wp-cli init Job: a plain Job named per release revision, not a Helm hook (a hook would deadlock with `--wait`)
-- [ ] `values-prod.yaml`
-- [ ] **Checkpoint:** definition-of-done flow over Ingress with two users
+- [x] `values-prod.yaml` (both charts: `shikharsaxena.space`, https, cert-manager with Let's Encrypt staging first; rendered and dry-run only, 18 Oct)
+- [x] **Checkpoint:** definition-of-done flow over Ingress with two users (18 Oct on k3d, by script: the admin's chat created a product and found its order, a member's own key listed all 11 tools and called woo-demo and risk, disabling risk hid its tools from both, the revoked key got 401, every call in the audit log under the right user. The storefront order went through the shop's own checkout API and showed in WooCommerce admin. Still by hand for the video: clicking through checkout, and Claude Code as the external client)
 
 ## Oct 21: Health checks and audit log UI
 
 - [x] Background upstream health check (30 s, cached in Redis as `upstream:<id>:status`)
 - [x] Servers page shows Connected / Unreachable / Disabled (and Unchecked before the first probe)
-- [ ] Kill-pod test: dead server shows Unreachable, others keep working
+- [x] Kill-pod test: dead server shows Unreachable, others keep working (18 Oct on k3d: a deleted risk-mcp pod is replaced at once; scaled to zero it showed Unreachable after 20 s, its call failed with "risk is unreachable", woo-demo and fulfilment kept answering; one of fulfilment's two pods killed, calls still worked)
 - [x] Audit log page: user, server, tool, time, duration, outcome (also level, refused sign-ins, server changes, server health, team/key/store changes, and a "has the log been tampered with" check)
 
 ## Before the bonus: the graded notes
