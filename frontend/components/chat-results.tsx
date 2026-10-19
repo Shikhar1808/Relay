@@ -5,15 +5,15 @@ function Block({ block }: { block: ChatBlock }) {
   return (
     <section aria-label={block.title} className="arrive">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h3 className="font-display text-lg font-semibold">{block.title}</h3>
+        <h3 className="font-display text-lg">{block.title}</h3>
         {/* Every result says which tool it came from. */}
         <p className="text-xs text-ink-soft">From {block.source}</p>
       </div>
       {block.kind === "notice" && <Notice tone={block.tone ?? "info"}>{block.text}</Notice>}
       {block.kind === "table" && (
-        <div className="overflow-x-auto rounded-xl border border-line">
+        <div className="overflow-x-auto border border-line">
           <table className="w-full text-left text-sm">
-            <thead className="bg-canvas text-xs text-ink-soft">
+            <thead className="bg-accent-wash/60 text-xs text-ink-soft">
               <tr>
                 {block.columns?.map((column) => (
                   <th key={column} scope="col" className="px-3 py-2 font-medium whitespace-nowrap">
@@ -37,7 +37,7 @@ function Block({ block }: { block: ChatBlock }) {
         </div>
       )}
       {block.kind === "card" && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5 rounded-xl border border-line p-4 text-sm">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5 border border-line p-4 text-sm">
           {block.fields?.map(([label, value]) => (
             <div key={label} className="contents">
               <dt className="text-ink-soft">{label}</dt>
@@ -47,7 +47,7 @@ function Block({ block }: { block: ChatBlock }) {
         </dl>
       )}
       {block.kind === "raw" && (
-        <pre className="overflow-x-auto rounded-xl bg-canvas p-3 font-mono text-xs break-words whitespace-pre-wrap">{block.text}</pre>
+        <pre className="overflow-x-auto bg-accent-wash/60 p-3 font-mono text-xs break-words whitespace-pre-wrap">{block.text}</pre>
       )}
     </section>
   );
@@ -58,7 +58,7 @@ export function ChatResults({ blocks, steps }: { blocks: ChatBlock[]; steps: str
   if (blocks.length === 0) {
     return (
       <div className="m-auto max-w-sm text-center">
-        <p className="font-display text-xl font-semibold">Results show up here</p>
+        <p className="font-display text-2xl font-light">Results show up here</p>
         <p className="mt-1 text-ink-soft">
           When the agent looks something up or changes something, you see it here as a table or a card, with the tool it came
           from.

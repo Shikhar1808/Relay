@@ -152,20 +152,20 @@ export default function AuditPage() {
 
   return (
     <>
-      <PageTitle title="Audit log">
+      <PageTitle title="Nothing goes unrecorded.">
         What went through the gateway, and what was changed here. Rows can be added, never edited or deleted.
       </PageTitle>
 
       <ChainStatus />
 
-      <div role="group" aria-label="What to show" className="flex flex-wrap gap-2">
+      <div role="group" aria-label="What to show" className="flex flex-wrap gap-x-6 border-b border-line">
         {views.map(({ id, label }) => (
           <button
             key={id}
             type="button"
             aria-pressed={id === view.id}
             onClick={() => setViewId(id)}
-            className={`rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${id === view.id ? "border-accent bg-accent text-white" : "border-line bg-white hover:border-accent hover:text-accent"}`}
+            className={`-mb-px border-b py-2 font-display whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${id === view.id ? "border-ink text-ink" : "border-transparent text-ink-soft hover:text-ink"}`}
           >
             {label}
           </button>
@@ -204,7 +204,7 @@ function ChainStatus() {
     <Card className="mb-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
-          <h2 className="font-display text-lg font-semibold">Has the gateway&apos;s log been tampered with?</h2>
+          <h2 className="font-display text-xl">Has the gateway&apos;s log been tampered with?</h2>
           <p className="mt-1 max-w-prose text-sm text-ink-soft">
             Each row is sealed to the one before it, so a changed or missing row breaks the chain. Checking reads
             the whole log. It covers gateway events, not team, key and store changes.
@@ -259,8 +259,8 @@ function EventList({ path }: { path: string }) {
       </div>
 
       {events.length > 0 && (
-        <div className="rounded-2xl border border-line bg-white">
-          <div className={`hidden gap-x-4 border-b border-line px-5 py-2.5 text-xs font-medium tracking-wide text-ink-soft uppercase lg:grid ${columns}`}>
+        <div className="border-b border-line">
+          <div className={`hidden gap-x-4 border-y border-edge px-3 py-2.5 text-xs font-medium tracking-wide text-ink-soft uppercase lg:grid ${columns}`}>
             <span>Level</span>
             <span>What</span>
             <span>Who</span>
@@ -304,7 +304,7 @@ function EventRow({ event }: { event: AuditEvent }) {
       <details className="group">
         {/* Two lines on a small screen; from `lg` up the second line's parts become columns of their own. */}
         <summary
-          className={`grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_1rem] items-center gap-x-4 gap-y-1 px-5 py-3 transition-colors hover:bg-canvas/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden ${columns}`}
+          className={`grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_1rem] items-center gap-x-4 gap-y-1 px-3 py-3 transition-colors hover:bg-ink/[0.03] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden ${columns}`}
         >
           <span>
             <Pill tone={levelTone[event.severity]}>{event.severity.toLowerCase()}</Pill>
@@ -323,7 +323,7 @@ function EventRow({ event }: { event: AuditEvent }) {
           </span>
         </summary>
 
-        <dl className="arrive grid gap-x-6 gap-y-2 border-t border-line bg-canvas/60 px-5 py-4 text-sm sm:grid-cols-[11rem_minmax(0,1fr)]">
+        <dl className="arrive grid gap-x-6 gap-y-2 border-t border-line bg-accent-wash/60 px-3 py-4 text-sm sm:grid-cols-[11rem_minmax(0,1fr)]">
           <dt className="text-ink-soft">Event</dt>
           <dd className="font-mono text-xs leading-6">
             #{event.seq} · {event.category} · {event.action} · {event.outcome}
@@ -343,7 +343,7 @@ function EventRow({ event }: { event: AuditEvent }) {
                 <dt className="text-ink-soft">{detailLabels[key] ?? key}</dt>
                 <dd className="min-w-0">
                   {block ? (
-                    <pre className="overflow-x-auto rounded-lg bg-white p-3 font-mono text-xs break-words whitespace-pre-wrap">{text}</pre>
+                    <pre className="overflow-x-auto bg-canvas p-3 font-mono text-xs break-words whitespace-pre-wrap">{text}</pre>
                   ) : (
                     <span className="break-all">{text}</span>
                   )}

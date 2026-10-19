@@ -87,7 +87,7 @@ export default function ChatPage() {
 
   return (
     <>
-      <PageTitle title="Chat">
+      <PageTitle title="Ask your stores.">
         {user?.role === "admin"
           ? "Ask the agent about any store."
           : "Ask the agent about your stores. It can only see the stores you work in."}
@@ -95,16 +95,16 @@ export default function ChatPage() {
 
       {/* Results on the left, the chat on the right. On a narrow screen the chat comes first. */}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <section
-          aria-label="Results"
-          className="order-2 flex min-h-80 flex-col overflow-y-auto rounded-2xl border border-line bg-white p-5 lg:order-1 lg:h-[calc(100dvh-15rem)]"
-        >
-          <ChatResults blocks={shown.blocks} steps={shown.steps} />
+        <section aria-label="Results" className="frame cut order-2 flex min-h-80 flex-col lg:order-1 lg:h-[calc(100dvh-21rem)]">
+          {/* Scrolls inside the frame, so the frame's cut corner stays put. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-5">
+            <ChatResults blocks={shown.blocks} steps={shown.steps} />
+          </div>
         </section>
 
         <section
           aria-label="Conversation"
-          className="order-1 flex h-[calc(100dvh-21rem)] min-h-80 flex-col rounded-2xl border border-line bg-white lg:order-2 lg:h-[calc(100dvh-15rem)]"
+          className="frame cut order-1 flex h-[calc(100dvh-27rem)] min-h-80 flex-col lg:order-2 lg:h-[calc(100dvh-21rem)]"
         >
           <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
             {past ? (
@@ -125,7 +125,7 @@ export default function ChatPage() {
                       const id = event.target.value;
                       void run(async () => setPast(await api<Chat>(`/chat/history/${id}`)));
                     }}
-                    className="max-w-full truncate rounded-lg bg-canvas px-2 py-1.5 text-ink-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    className="max-w-full truncate bg-transparent py-1.5 text-ink-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                   >
                     <option value="">{history?.length ? "Earlier chats" : "No earlier chats"}</option>
                     {history?.map((chat) => (
@@ -145,7 +145,7 @@ export default function ChatPage() {
           <ol aria-live="polite" className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
             {shown.messages.length === 0 && (
               <li className="m-auto max-w-sm text-center">
-                <p className="font-display text-xl font-semibold">What do you want to know?</p>
+                <p className="font-display text-2xl font-light">What do you want to know?</p>
                 <p className="mt-1 text-ink-soft">Ask about orders, products or stock, or start with one of these.</p>
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
                   {starters.map((starter) => (
@@ -153,7 +153,7 @@ export default function ChatPage() {
                       key={starter}
                       type="button"
                       onClick={() => send(starter)}
-                      className="rounded-full border border-line px-3.5 py-1.5 text-sm transition-colors hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      className="border border-edge px-3.5 py-1.5 text-sm transition-colors hover:bg-ink hover:text-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     >
                       {starter}
                     </button>
@@ -164,14 +164,14 @@ export default function ChatPage() {
             {shown.messages.map((message, index) => (
               <li
                 key={index}
-                className={`arrive max-w-[85%] rounded-2xl px-4 py-2.5 whitespace-pre-wrap ${message.from === "you" ? "self-end rounded-br-md bg-accent text-white" : "self-start rounded-bl-md bg-canvas"}`}
+                className={`arrive max-w-[85%] px-4 py-2.5 whitespace-pre-wrap ${message.from === "you" ? "self-end bg-ink text-canvas" : "self-start bg-accent-wash"}`}
               >
                 <span className="sr-only">{message.from === "you" ? "You: " : "Agent: "}</span>
                 {message.from === "agent" ? plain(message.text) : message.text}
               </li>
             ))}
             {busy && (
-              <li className="typing self-start rounded-2xl rounded-bl-md bg-canvas px-4 py-3">
+              <li className="typing self-start bg-accent-wash px-4 py-3">
                 <span />
                 <span />
                 <span />
@@ -179,7 +179,7 @@ export default function ChatPage() {
               </li>
             )}
             {waiting && !busy && (
-              <li className="arrive self-stretch rounded-2xl border border-brass/30 bg-brass-wash p-4">
+              <li className="arrive self-stretch border-l-2 border-brass bg-brass-wash p-4">
                 <p className="text-sm font-medium">The agent wants to make {result.pending.length === 1 ? "this change" : "these changes"}:</p>
                 <ul className="mt-2 list-inside list-disc space-y-1 text-sm">
                   {result.pending.map((change) => (
@@ -223,13 +223,13 @@ export default function ChatPage() {
                     send(draft.trim());
                   }
                 }}
-                className="block max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-canvas px-3.5 py-2.5 placeholder:text-ink-soft/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="block max-h-40 min-h-11 flex-1 resize-none border-b border-ink-soft/50 bg-transparent px-1 py-2.5 placeholder:text-ink-soft/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
               />
               <button
                 type="submit"
                 aria-label="Send"
                 disabled={busy || waiting || !draft.trim()}
-                className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent-deep active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="cut inline-flex size-11 shrink-0 items-center justify-center bg-ink text-canvas transition [--cut:9px] hover:bg-accent-deep active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-canvas"
               >
                 <Icon name="send" />
               </button>

@@ -15,11 +15,9 @@ export default function AccountPage() {
 
   return (
     <>
-      <PageTitle title="Account">
-        Signed in as {user?.name} ({user?.email}).
-      </PageTitle>
+      <PageTitle title={`Hello, ${user?.name.split(" ")[0]}.`}>Signed in as {user?.email}.</PageTitle>
       <form
-        className="max-w-md space-y-4 rounded-2xl border border-line bg-white p-5 sm:p-6"
+        className="frame cut max-w-md space-y-5 p-5 sm:p-6"
         onSubmit={(event) => {
           event.preventDefault();
           setChanged(false);
@@ -31,7 +29,7 @@ export default function AccountPage() {
           });
         }}
       >
-        <h2 className="font-display text-xl font-semibold">Change password</h2>
+        <h2 className="font-display text-xl">Change password</h2>
         <PasswordField
           label="Current password"
           autoComplete="current-password"

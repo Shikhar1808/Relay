@@ -56,6 +56,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 - [x] Dashboard shell: sign in, side navigation, Team, API key, Chat, Account, Stores pages
 - [x] Dashboard: Servers page (`/servers`, admin only; 17 Oct): add, edit, disable, remove, and each server's status and tools from the gateway's last probe (it now also writes `upstream:<id>:tools` to Redis). Checked in headless Chrome at desktop and phone widths, with `woo-demo` connected and its 7 tools
 - [x] Dashboard: Audit log page (`/audit`, admin only; checked in a browser at desktop and phone widths)
+- [x] Dashboard look after `refernces/frontend desgin ref/` (19 Oct): ink on paper, thin frames with one corner cut, tabs along the top in place of the side navigation, a row of counts at the top of Stores, Team and Servers, statuses as a coloured dot. Then made livelier: a paper colour per section (Servers dark), a headline per page with the section and stores above it, a rail with the name read upwards, an outline that turns between pages, icon squares on store and server tiles. Checked in headless Edge at desktop width against a stand-in API with sample data
 - [x] **Checkpoint:** ask a question in chat, the agent calls a WooCommerce tool, the reply comes back (in one piece, see above; 13 Oct, with Groq's `openai/gpt-oss-20b`: "what orders came in today?", and a product created after a confirmation and seen on the storefront)
 
 ## Oct 16: Buffer and integration test

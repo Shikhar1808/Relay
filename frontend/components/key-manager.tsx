@@ -28,7 +28,7 @@ export function KeyManager({ basePath }: { basePath: string }) {
       {created && <Secret label="Your new API key" value={created.raw_key} />}
 
       {active ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-canvas p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border border-line p-4">
           <div>
             <p className="font-mono text-sm">{active.prefix}…</p>
             <p className="mt-1 text-sm text-ink-soft">

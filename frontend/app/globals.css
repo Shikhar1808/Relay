@@ -1,28 +1,27 @@
 @import "tailwindcss";
 
-/* Urumi: a cool, quiet workspace; the aurora colours are kept for the sign-in panel, the logo and people. */
+/* Urumi: black ink on paper, thin frames, one corner cut like a blade's edge. Colour is kept for status. */
 @theme {
-  --color-canvas: #f2f5fa;
-  --color-ink: #1b2140;
-  --color-ink-soft: #636b85;
-  --color-line: #e1e6f0;
-  --color-accent: #5446e0;
-  --color-accent-deep: #4234c4;
-  --color-accent-wash: #eeecff;
-  --color-good: #12663d;
-  --color-good-wash: #dcf5e7;
-  --color-brass: #8a5a00;
-  --color-brass-wash: #fff4d6;
-  --color-danger: #c2313b;
-
-  --color-butter: #ffe89a;
-  --color-apricot: #f9b384;
-  --color-rose: #f9a3cb;
-  --color-orchid: #d6aaf8;
-  --color-sky: #a4e6f1;
+  --color-canvas: #f6f6f2;
+  --color-ink: #1c1c1a;
+  --color-ink-soft: #66655f;
+  --color-line: #dcdbd3;
+  --color-edge: #3d3d39;
+  --color-accent: #1c1c1a;
+  --color-accent-deep: #000000;
+  --color-accent-wash: #ebeae4;
+  --color-good: #1d7a4b;
+  --color-good-wash: #e1f1e6;
+  --color-brass: #8f6200;
+  --color-brass-wash: #fbf0d3;
+  --color-danger: #c2312b;
 
   --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-chakra), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --cut: 18px;
 }
 
 body {
@@ -31,56 +30,66 @@ body {
   font-family: var(--font-sans);
 }
 
-/* The sign-in panel: blurred colour fields that drift slowly. */
-.aurora {
-  background: linear-gradient(160deg, #fff3b0, #f7a56e 45%, #c63fd6 80%, #8a1fd1);
-  isolation: isolate;
+/* Each section has its own paper. The console layout picks one by page; everything inside follows. */
+.tint-blush {
+  --color-canvas: #fae0e5;
+  --color-line: #ebc3cb;
+  --color-accent-wash: #f4cfd6;
 }
 
-.aurora > span {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(56px);
-  animation: drift 16s ease-in-out infinite alternate;
+.tint-butter {
+  --color-canvas: #f8eec4;
+  --color-line: #e2d49c;
+  --color-accent-wash: #f0e3aa;
 }
 
-.aurora > span:nth-child(1) {
-  inset: -10% 40% 55% -15%;
-  background: #fff1a8;
+.tint-mint {
+  --color-canvas: #dcefe4;
+  --color-line: #b8d9c7;
+  --color-accent-wash: #c9e6d6;
 }
 
-.aurora > span:nth-child(2) {
-  inset: -15% -15% 60% 55%;
-  background: #8fe6f2;
-  animation-duration: 21s;
-  animation-direction: alternate-reverse;
+/* The night page: light ink on deep teal. */
+.tint-night {
+  color-scheme: dark;
+  --color-canvas: #0f2d2b;
+  --color-ink: #e6efeb;
+  --color-ink-soft: #9db7b0;
+  --color-line: #2b4a47;
+  --color-edge: #cfdcd7;
+  --color-accent: #e6efeb;
+  --color-accent-deep: #ffffff;
+  --color-accent-wash: #173b38;
+  --color-good: #5bd394;
+  --color-good-wash: #123d2b;
+  --color-brass: #f2c55c;
+  --color-brass-wash: #3b3415;
+  --color-danger: #ff8073;
 }
 
-.aurora > span:nth-child(3) {
-  inset: 12% -10% 40% 45%;
-  background: #e59bf5;
-  animation-duration: 19s;
-}
-
-.aurora > span:nth-child(4) {
-  inset: 40% 45% 15% -15%;
-  background: #f2784b;
-  animation-duration: 23s;
-  animation-direction: alternate-reverse;
-}
-
-.aurora > span:nth-child(5) {
-  inset: 45% -10% 5% 40%;
-  background: #e83fd0;
-  animation-duration: 17s;
-}
-
-@keyframes drift {
-  from {
-    transform: translate3d(-6%, 4%, 0) scale(1);
+/* In the components layer so a utility class can still override them. */
+@layer components {
+  /* The bottom-right corner taken off at 45°. Set --cut to change its size. */
+  .cut {
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%);
   }
-  to {
-    transform: translate3d(8%, -6%, 0) scale(1.2);
+
+  /* A framed .cut: the frame follows the cut corner. */
+  .frame {
+    position: relative;
+    border: 1px solid var(--color-edge);
+  }
+
+  .frame::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    width: var(--cut);
+    height: var(--cut);
+    /* The line on the cut; its outer half would be clipped, so it is drawn inside. */
+    background: linear-gradient(to top left, transparent 50%, var(--color-edge) 50% calc(50% + 1px), transparent 0);
+    pointer-events: none;
   }
 }
 
@@ -125,7 +134,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .aurora > span,
   .page > *,
   .arrive,
   .typing span {

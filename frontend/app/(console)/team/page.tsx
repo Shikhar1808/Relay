@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { KeyManager } from "@/components/key-manager";
-import { Avatar, Button, Card, Field, Notice, PageTitle, Pill, Secret, useAction } from "@/components/ui";
+import { Avatar, Button, Card, Field, Notice, PageTitle, Pill, Secret, SectionTitle, Stats, useAction } from "@/components/ui";
 import { api, type MemberCreated, type User } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useData } from "@/lib/use-data";
@@ -21,13 +21,25 @@ export default function TeamPage() {
   const [resentTo, setResentTo] = useState<string>();
 
   if (!isAdmin) return <PageTitle title="Team">Only the admin can manage the team.</PageTitle>;
+  const members = people?.filter((person) => person.role === "member") ?? [];
+  const deactivated = members.filter((person) => !person.is_active).length;
 
   return (
     <>
-      <PageTitle title="Team">
+      <PageTitle title="Who works where.">
         Add people, then give each one a store on the Stores page. A new member gets an email with a link to
         choose their password.
       </PageTitle>
+      {people && (
+        <Stats
+          items={[
+            { label: "People", value: people.length },
+            { label: "Active members", value: members.length - deactivated, tone: members.length > deactivated ? "good" : undefined },
+            { label: "Admins", value: people.length - members.length },
+            { label: "Deactivated", value: deactivated, note: "Can't sign in" },
+          ]}
+        />
+      )}
 
       <Card className="max-w-3xl space-y-4">
         <form
@@ -57,12 +69,13 @@ export default function TeamPage() {
         )}
       </Card>
 
-      <div className="mt-8 space-y-4">
+      <div className="mt-10 space-y-4">
+        <SectionTitle title="People" />
         <Notice tone="error">{loadError ?? rowAction.error}</Notice>
         <Notice tone="success">{resentTo && `A new invite link was emailed to ${resentTo}.`}</Notice>
       </div>
       {people && (
-        <ul className="mt-4 divide-y divide-line rounded-2xl border border-line bg-white px-5">
+        <ul className="divide-y divide-line border-b border-line">
           {people.map((person) => (
             <li key={person.id} className="py-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -121,7 +134,7 @@ export default function TeamPage() {
                 )}
               </div>
               {keysOpenFor === person.id && (
-                <div className="arrive mt-4 rounded-xl bg-canvas p-4">
+                <div className="arrive mt-4 bg-accent-wash/60 p-4">
                   <KeyManager basePath={`/team/members/${person.id}/api-keys`} />
                 </div>
               )}

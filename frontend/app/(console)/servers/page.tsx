@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { Button, Card, Field, inputStyles, Notice, PageTitle, Pill, useAction } from "@/components/ui";
+import { Button, Card, Field, IconBox, inputStyles, Notice, PageTitle, Pill, SectionTitle, Stats, useAction } from "@/components/ui";
 import { api, type Store, type UpstreamServer } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useData } from "@/lib/use-data";
@@ -16,26 +16,46 @@ export default function ServersPage() {
   const [editingId, setEditingId] = useState<string>();
 
   if (!isAdmin) return <PageTitle title="Servers">Only the admin can manage servers.</PageTitle>;
+  const live = servers?.filter((server) => server.enabled) ?? [];
+  const connected = live.filter((server) => server.status === "connected");
+  const unreachable = live.filter((server) => server.status === "unreachable").length;
+  const disabled = (servers?.length ?? 0) - live.length;
 
   return (
     <>
-      <PageTitle title="Servers">
+      <PageTitle title="Every tool, accounted for.">
         The MCP servers the gateway forwards to. Chat and API keys see each tool as{" "}
         <code className="font-mono text-sm">slug__tool</code>, and only in the stores the server belongs to.
       </PageTitle>
+      {servers && (
+        <Stats
+          items={[
+            { label: "Servers", value: servers.length, note: disabled ? `${disabled} disabled` : undefined },
+            { label: "Connected", value: connected.length, tone: connected.length ? "good" : undefined },
+            { label: "Unreachable", value: unreachable, tone: unreachable ? "danger" : undefined },
+            {
+              label: "Tools",
+              value: connected.reduce((sum, server) => sum + server.tools.length, 0),
+              note: "Reachable from chat and API keys",
+            },
+          ]}
+        />
+      )}
 
       <Card className="max-w-3xl">
-        <h2 className="mb-4 font-display text-xl font-semibold">Add a server</h2>
+        <h2 className="mb-4 font-display text-xl">Add a server</h2>
         <ServerForm stores={stores} onDone={reload} />
       </Card>
 
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+      <div className="mt-10">
+        <SectionTitle title="All servers">
+          <Button variant="quiet" className="px-3.5 py-1.5" onClick={() => void reload()}>
+            Refresh
+          </Button>
+        </SectionTitle>
         <p className="text-sm text-ink-soft">
           Status is the gateway&apos;s last check: every 30 seconds, and right after a change here.
         </p>
-        <Button variant="quiet" onClick={() => void reload()}>
-          Refresh
-        </Button>
       </div>
       <div className="mt-4">
         <Notice tone="error">{loadError ?? rowAction.error}</Notice>
@@ -45,21 +65,21 @@ export default function ServersPage() {
         (servers.length === 0 ? (
           <p className="mt-4 text-ink-soft">No servers yet. Add the first one above.</p>
         ) : (
-          <ul className="mt-4 space-y-4">
+          <ul className="mt-4 grid items-start gap-4 lg:grid-cols-2">
             {servers.map((server) => {
               const store =
                 server.store_id === null
                   ? "Every store"
                   : (stores.find((s) => s.id === server.store_id)?.name ?? "One store");
               return (
-                <li key={server.id} className="rounded-2xl border border-line bg-white p-5 sm:p-6">
+                // The server being edited takes the full row, so its form has room.
+                <li key={server.id} className={`frame cut p-5 sm:p-6 ${editingId === server.id ? "lg:col-span-2" : ""}`}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h2 className="font-display text-xl font-semibold break-words">{server.name}</h2>
-                      <p className="mt-0.5 font-mono text-sm text-ink-soft">{server.slug}</p>
-                    </div>
+                    <IconBox name="servers" />
                     <StatusPill server={server} />
                   </div>
+                  <h2 className="mt-4 font-display text-xl break-words">{server.name}</h2>
+                  <p className="mt-0.5 font-mono text-sm text-ink-soft">{server.slug}</p>
                   <dl className="mt-4 grid grid-cols-[6.5rem_1fr] gap-y-2 text-sm">
                     <dt className="text-ink-soft">Address</dt>
                     <dd className="font-mono break-all">{server.url}</dd>
@@ -71,7 +91,7 @@ export default function ServersPage() {
                   <Tools server={server} />
 
                   {editingId === server.id ? (
-                    <div className="arrive mt-4 rounded-xl bg-canvas p-4">
+                    <div className="arrive mt-4 bg-accent-wash/60 p-4">
                       <ServerForm
                         server={server}
                         stores={stores}
@@ -144,7 +164,7 @@ function Tools({ server }: { server: UpstreamServer }) {
       <p className="text-sm font-medium">Tools ({server.tools.length})</p>
       <ul className="mt-2 flex flex-wrap gap-1.5">
         {server.tools.map((tool) => (
-          <li key={tool} className="rounded-lg bg-canvas px-2 py-1 font-mono text-xs">
+          <li key={tool} className="border border-line px-2 py-1 font-mono text-xs">
             {tool}
           </li>
         ))}
