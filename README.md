@@ -63,11 +63,11 @@ images (Postgres, Redis, MySQL, WordPress) are downloaded by the cluster itself.
 ```sh
 docker build -t urumi-backend:0.1.0 backend
 docker build -t urumi-gateway:0.1.0 gateway
-docker build -t urumi-frontend:0.1.0 frontend
+docker build -t urumi-frontend:0.2.0 frontend
 docker build -t urumi-woo-mcp:0.1.0 woo-mcp
 docker build -t urumi-risk-mcp:0.1.0 risk-mcp
 docker build -t urumi-fulfilment-mcp:0.1.0 fulfilment-mcp
-k3d image import -c urumi urumi-backend:0.1.0 urumi-gateway:0.1.0 urumi-frontend:0.1.0 urumi-woo-mcp:0.1.0 urumi-risk-mcp:0.1.0 urumi-fulfilment-mcp:0.1.0
+k3d image import -c urumi urumi-backend:0.1.0 urumi-gateway:0.1.0 urumi-frontend:0.2.0 urumi-woo-mcp:0.1.0 urumi-risk-mcp:0.1.0 urumi-fulfilment-mcp:0.1.0
 ```
 
 **3. The secrets.** No secret is in the charts or in git. This writes two git-ignored files
@@ -275,7 +275,7 @@ What the server needs: Ubuntu 24.04 with a public IPv4 address, at least 4 GB of
 5. **The images:** build them as in local step 2, then copy them to the server:
 
    ```sh
-   docker save -o urumi-images.tar urumi-backend:0.1.0 urumi-gateway:0.1.0 urumi-frontend:0.1.0 urumi-woo-mcp:0.1.0 urumi-risk-mcp:0.1.0 urumi-fulfilment-mcp:0.1.0
+   docker save -o urumi-images.tar urumi-backend:0.1.0 urumi-gateway:0.1.0 urumi-frontend:0.2.0 urumi-woo-mcp:0.1.0 urumi-risk-mcp:0.1.0 urumi-fulfilment-mcp:0.1.0
    scp urumi-images.tar <user>@<server>:
    ssh <user>@<server> 'sudo k3s ctr images import urumi-images.tar && rm urumi-images.tar'
    ```

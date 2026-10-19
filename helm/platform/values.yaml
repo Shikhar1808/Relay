@@ -9,7 +9,7 @@ imagePullPolicy: IfNotPresent
 images:
   backend: urumi-backend:0.1.0
   gateway: urumi-gateway:0.1.0
-  frontend: urumi-frontend:0.1.0
+  frontend: urumi-frontend:0.2.0
   riskMcp: urumi-risk-mcp:0.1.0
   postgres: postgres:18-alpine
   redis: redis:7-alpine
