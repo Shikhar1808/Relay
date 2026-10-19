@@ -1,10 +1,9 @@
 # Timeline
 
-Progress against the plan in `extras/Urumi FDE — Full Implementation Guide.pdf`
-and the assignment in `extras/Urumi AI FDE Internship - Round 1_ MCP Gateway on Kubernetes.pdf`.
+Progress against the implementation guide and the assignment brief (both kept outside the repo).
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 18 Oct 2026
+- **Last updated:** 19 Oct 2026
 - **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. The Servers page is built. On k3d (18 Oct) the two Helm charts (`helm/platform`, `helm/store`) run everything, and all three servers (woo-demo, risk, fulfilment) show Connected. NetworkPolicies are in and tested: only the gateway reaches the store MCP servers, and only fulfilment-mcp from a store namespace reaches Postgres. `values-prod.yaml` is written for the VPS. Next: the VPS (k3s, DNS, cert-manager)
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
@@ -83,7 +82,7 @@ Tick an item only when it is built and checked. Update "Last updated" and "Now" 
 
 ## Oct 19–20: Ingress and WordPress init
 
-- [x] Traefik (k3s's own, instead of NGINX) with Ingresses for `app.`, `api.`, `mcp.` and the storefront `demo.` under `127.0.0.1.nip.io` (18 Oct). Ingress for storefront and dashboard. The dashboard and the API must end up on one site, or sign in breaks (the session cookie is `SameSite=Strict`): one host with the API under a path such as `/api`, or two subdomains of one domain (`app.urumi.local` and `api.urumi.local`). Not `dashboard.local` and `api.local`. Set `APP_BASE_URL` to the dashboard's address; never set `CORS_ORIGINS` to `"*"`, the backend refuses to start with it
+- [x] Traefik (k3s's own, instead of NGINX) with Ingresses for `app.`, `api.`, `mcp.` and the storefront `demo.` under `127.0.0.1.nip.io` (18 Oct). Ingress for storefront and dashboard. The dashboard and the API must end up on one site, or sign in breaks (the session cookie is `SameSite=Strict`): one host with the API under a path such as `/api`, or two subdomains of one domain (`app.relay.local` and `api.relay.local`). Not `dashboard.local` and `api.local`. Set `APP_BASE_URL` to the dashboard's address; never set `CORS_ORIGINS` to `"*"`, the backend refuses to start with it
 - [x] Local domain instructions: names under nip.io, no hosts file needed (README, "Local domain approach", with hosts-file lines for working offline; 18 Oct)
 - [x] wp-cli init Job: a plain Job named per release revision, not a Helm hook (a hook would deadlock with `--wait`)
 - [x] `values-prod.yaml` (both charts: `shikharsaxena.space`, https, cert-manager with Let's Encrypt staging first; rendered and dry-run only, 18 Oct)
@@ -160,6 +159,7 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - The gateway's audit log records which chat and which message a chat tool call belongs to; only for the chat agent's token, so an API-key caller cannot plant them
 - A first store registered by the admin's signup is recorded as the signup's doing, with the caller's address, and the signup answers normally when the store was already registered
 - Tests: `./run_tests.sh` runs the unit tests of the three services (pytest), `./run_tests.sh all` adds the two end-to-end tests (`backend/scripts/smoke_test.py`, `gateway/tests/integration_test.py` with mock upstreams)
+- The project is called Relay (renamed 19 Oct): the dashboard, emails, the API and gateway names, the charts (`relay-platform`, `relay-store`), the images (`relay-*`), the Compose project (`name: relay`, its data copied over from the old volumes), the session cookie, and the store's setup flag and REST key label. The Kubernetes names stay as they were: namespace `urumi`, Secret `urumi-platform`, label `urumi.io/store`, k3d cluster `urumi`
 
 ## Future expansion
 
@@ -356,7 +356,7 @@ That is 20 random bytes as 40 hex characters, the same as secrets.token_hex(20).
 
 The cost is that the script writes straight into WooCommerce's table instead of going through a supported interface, so a future WooCommerce version could break it.
 
-The manual way still works too: click "Add key" in wp-admin, paste the two values into .env as WOOCOMMERCE_KEY and WOOCOMMERCE_SECRET, and restart woo-mcp. Do not run wp-init again after that: it would register the .env pair a second time under the label urumi-mcp.
+The manual way still works too: click "Add key" in wp-admin, paste the two values into .env as WOOCOMMERCE_KEY and WOOCOMMERCE_SECRET, and restart woo-mcp. Do not run wp-init again after that: it would register the .env pair a second time under the label relay-mcp.
 
 
 A repeated create cannot make a duplicate product. A true transaction is not possible here, because WooCommerce's REST API has no transactions or idempotency keys. What it does have is a rule that refuses a second product with the same SKU, even when requests arrive at once. So create_product now sends a SKU made from the product name, and a repeat is refused with the id of the product already there. Against a real store:
@@ -366,7 +366,7 @@ A repeated create cannot make a duplicate product. A true transaction is not pos
    - A SKU the merchant chose is never changed.
 
 Before. wp-init.sh runs every time you do docker compose up. Each time, it set the time zone, turned shipping off, enabled cash on delivery, turned "coming soon" off, and added Sample Mug if the store had no products. So if you changed any of those in wp-admin (say, enabled shipping), the next start silently put it back.
-Now. The script does those five things once. When it finishes, it saves a small flag in the store's own database (an option named urumi_store_set_up with the value yes). On every later start it sees the flag and skips that whole block, so whatever you set in wp-admin stays.
+Now. The script does those five things once. When it finishes, it saves a small flag in the store's own database (an option named relay_store_set_up with the value yes). On every later start it sees the flag and skips that whole block, so whatever you set in wp-admin stays.
 "On a throwaway store I changed those settings…" That was my test. I built a second, temporary store from scratch, turned "coming soon" on, changed the time zone to UTC and deleted every product, then ran the script again. All three stayed as I had left them and no Sample Mug came back. I then deleted that temporary store; your real one was not touched by the test.
 "Your own store ran them one last time…" Your demo store was created before this change, so it had no flag yet. When I restarted your stack, the script found no flag, applied the five settings one more time, and then wrote the flag. From the next start onward your store's settings are left alone.
 Two things the script still does on every start, on purpose, because they come from .env: it sets the wp-admin password to WP_ADMIN_PASSWORD if it differs, and it registers the REST key pair.

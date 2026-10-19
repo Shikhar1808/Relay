@@ -1,6 +1,6 @@
 # System design and tradeoffs
 
-How Urumi is built, why, and what that costs. Setup is in the [README](../README.md); the
+How Relay is built, why, and what that costs. Setup is in the [README](../README.md); the
 security side is in the [threat model](threat-model.md).
 
 ## What runs where

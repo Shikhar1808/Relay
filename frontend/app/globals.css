@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Urumi: black ink on paper, thin frames, one corner cut like a blade's edge. Colour is kept for status. */
+/* Relay: black ink on paper, thin frames, one corner cut. Colour is kept for status. */
 @theme {
   --color-canvas: #f6f6f2;
   --color-ink: #1c1c1a;

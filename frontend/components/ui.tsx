@@ -234,15 +234,15 @@ export function IconBox({ name }: { name: keyof typeof iconPaths }) {
   );
 }
 
-/** An urumi's ribbon blade: the mark, and the line drawn across the sign-in panel. */
-export const blade = "M4 16c4 3 8 1 7-3s3-7 9-5";
+/** The mark's line, a signal passed along; also drawn large across the sign-in panel. */
+export const markLine = "M4 16c4 3 8 1 7-3s3-7 9-5";
 
-/** The mark: the blade on a block of ink with its corner cut. `className` sets its size. */
+/** The mark: the line on a block of ink with its corner cut. `className` sets its size. */
 export function Logo({ className = "size-9" }: { className?: string }) {
   return (
     <span aria-hidden="true" className={`cut inline-flex shrink-0 items-center justify-center bg-ink [--cut:9px] ${className}`}>
       <svg viewBox="0 0 24 24" className="size-4/5" fill="none" stroke="var(--color-canvas)" strokeWidth="1.75" strokeLinecap="round">
-        <path d={blade} />
+        <path d={markLine} />
       </svg>
     </span>
   );

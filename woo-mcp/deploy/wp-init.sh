@@ -50,7 +50,7 @@ wp plugin is-active woocommerce || wp plugin install woocommerce --version=11.2.
 # The store's own settings, set once. From then on they are the store admin's: a later start
 # must not undo what was changed in wp-admin. The mark is written last, so a run that failed
 # halfway does all of it again.
-if [ "$(wp option get urumi_store_set_up 2>/dev/null)" != yes ]; then
+if [ "$(wp option get relay_store_set_up 2>/dev/null)" != yes ]; then
     # A fresh WooCommerce hides the storefront behind a "coming soon" page.
     wp option update woocommerce_coming_soon no
     # No shipping zones are set up, and without one checkout would have no way to deliver an order.
@@ -70,7 +70,7 @@ if [ "$(wp option get urumi_store_set_up 2>/dev/null)" != yes ]; then
     if [ "$(wp post list --post_type=product --format=count)" = 0 ]; then
         wp wc product create --name="Sample Mug" --type=simple --regular_price=199 --user="$WP_ADMIN_USER" --porcelain
     fi
-    wp option update urumi_store_set_up yes
+    wp option update relay_store_set_up yes
 fi
 
 # The REST key belongs to a Shop manager, not the administrator: it can change products, orders
@@ -90,10 +90,10 @@ if (!preg_match('/^ck_[0-9a-f]{40}$/', $key) || !preg_match('/^cs_[0-9a-f]{40}$/
     WP_CLI::error('WOOCOMMERCE_KEY must be ck_ and WOOCOMMERCE_SECRET cs_, each followed by 40 hex characters');
 }
 $table = $wpdb->prefix . 'woocommerce_api_keys';
-$wpdb->delete($table, ['description' => 'urumi-mcp']);  // so a changed pair replaces the old one
+$wpdb->delete($table, ['description' => 'relay-mcp']);  // so a changed pair replaces the old one
 $stored = $wpdb->insert($table, [
     'user_id' => get_user_by('login', 'mcp')->ID,
-    'description' => 'urumi-mcp',
+    'description' => 'relay-mcp',
     'permissions' => 'read_write',
     'consumer_key' => wc_api_hash($key),
     'consumer_secret' => $secret,

@@ -1,5 +1,5 @@
 [project]
-name = "urumi-fulfilment-mcp"
+name = "relay-fulfilment-mcp"
 version = "0.1.0"
 description = "Fulfilment MCP server: one store's orders through packing, shipped and delivered, for the gateway only"
 requires-python = ">=3.12"

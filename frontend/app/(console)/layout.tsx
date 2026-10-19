@@ -48,11 +48,11 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     <div className="min-h-screen lg:grid lg:grid-cols-[5.5rem_minmax(0,1fr)]">
       {/* The rail: the mark, and the name read upwards. Wide screens only. */}
       <aside className="sticky top-0 hidden h-screen flex-col items-center overflow-hidden border-r border-line pt-5 lg:flex">
-        <Link href="/stores" aria-label="Urumi home" className={focusRing}>
+        <Link href="/stores" aria-label="Relay home" className={focusRing}>
           <Logo className="size-14" />
         </Link>
         <p aria-hidden="true" className="mt-8 rotate-180 font-display text-6xl leading-none font-light whitespace-nowrap [writing-mode:vertical-rl]">
-          urumi store operations
+          relay store operations
         </p>
       </aside>
 
@@ -62,7 +62,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
           <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-8 px-5 pt-3 sm:px-8 lg:flex-nowrap lg:py-3">
             <Link href="/stores" className={`flex items-center gap-3 lg:hidden ${focusRing}`}>
               <Logo />
-              <span className="font-display text-xl font-medium tracking-tight">urumi</span>
+              <span className="font-display text-xl font-medium tracking-tight">relay</span>
             </Link>
             <nav
               aria-label="Sections"

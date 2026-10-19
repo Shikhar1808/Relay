@@ -7,10 +7,10 @@ tls:
 
 imagePullPolicy: IfNotPresent
 images:
-  backend: urumi-backend:0.1.0
-  gateway: urumi-gateway:0.1.0
-  frontend: urumi-frontend:0.2.0
-  riskMcp: urumi-risk-mcp:0.1.0
+  backend: relay-backend:0.1.0
+  gateway: relay-gateway:0.1.0
+  frontend: relay-frontend:0.2.0
+  riskMcp: relay-risk-mcp:0.1.0
   postgres: postgres:18-alpine
   redis: redis:7-alpine
 
@@ -28,7 +28,7 @@ traefik:
 
 #plain settings
 adminEmail: admin@example.com
-smtpFrom: "Urumi <onboarding@resend.dev>"
+smtpFrom: "Relay <onboarding@resend.dev>"
 llmBaseUrl: https://api.groq.com/openai/v1
 llmModel: openai/gpt-oss-20b
 timezone: Asia/Kolkata         # the first store's day, for the chat: must match store.timezone in helm/store

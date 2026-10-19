@@ -47,9 +47,9 @@ def _set_password_link(token: str) -> str:
 
 def invite_email(name: str, token: str) -> tuple[str, str]:
     return (
-        "You've been invited to Urumi",
+        "You've been invited to Relay",
         f"Hi {name},\n\n"
-        "An admin created an Urumi account for you. Choose your password here:\n\n"
+        "An admin created a Relay account for you. Choose your password here:\n\n"
         f"{_set_password_link(token)}\n\n"
         f"The link works once and expires in {settings.invite_token_ttl_hours} hours.\n",
     )
@@ -57,7 +57,7 @@ def invite_email(name: str, token: str) -> tuple[str, str]:
 
 def reset_email(name: str, token: str) -> tuple[str, str]:
     return (
-        "Reset your Urumi password",
+        "Reset your Relay password",
         f"Hi {name},\n\n"
         "Someone asked to reset the password for this account. Choose a new one here:\n\n"
         f"{_set_password_link(token)}\n\n"
@@ -69,5 +69,5 @@ def reset_email(name: str, token: str) -> tuple[str, str]:
 def notice_email(name: str, subject: str, what_happened: str) -> tuple[str, str]:
     return (
         subject,
-        f"Hi {name},\n\n{what_happened}\n\nIf you didn't expect this, contact your Urumi admin.\n",
+        f"Hi {name},\n\n{what_happened}\n\nIf you didn't expect this, contact your Relay admin.\n",
     )

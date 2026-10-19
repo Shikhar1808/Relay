@@ -1,4 +1,4 @@
-// Typed client for the Urumi Platform API (backend/app/api/routes).
+// Typed client for the Relay Platform API (backend/app/api/routes).
 
 export type Role = "admin" | "member";
 
@@ -107,7 +107,7 @@ export class ApiError extends Error {
   }
 }
 
-export const SIGNED_OUT_EVENT = "urumi:signed-out";
+export const SIGNED_OUT_EVENT = "relay:signed-out";
 
 let apiUrl: Promise<string> | undefined;
 const baseUrl = () =>

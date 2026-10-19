@@ -1,6 +1,6 @@
-# Urumi frontend
+# Relay frontend
 
-The web console for the Urumi platform: Next.js (App Router), TypeScript and
+The web console for the Relay platform: Next.js (App Router), TypeScript and
 Tailwind CSS. It talks to the API in `../backend`.
 
 ## Run it

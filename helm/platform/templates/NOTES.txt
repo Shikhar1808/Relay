@@ -1,4 +1,4 @@
-Urumi platform {{ .Chart.AppVersion }} is in the namespace {{ .Release.Namespace }} (revision {{ .Release.Revision }}).
+Relay platform {{ .Chart.AppVersion }} is in the namespace {{ .Release.Namespace }} (revision {{ .Release.Revision }}).
 
   Dashboard  {{ .Values.scheme }}://app.{{ .Values.domain }}
   API        {{ .Values.scheme }}://api.{{ .Values.domain }}

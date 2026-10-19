@@ -1,5 +1,5 @@
 [project]
-name = "urumi-platform-api"
+name = "relay-platform-api"
 version = "0.1.0"
 description = "Platform API: auth, team management, gateway API keys, store stubs, chat token flow"
 requires-python = ">=3.12,<3.14"

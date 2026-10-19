@@ -19,7 +19,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null | undefined>(undefined);
 
   useEffect(() => {
-    localStorage.removeItem("urumi_token"); // left behind by the version that kept the session there
     // The session cookie cannot be seen from here, so the API is asked who is signed in.
     api<{ user: User | null }>("/auth/session")
       .then((session) => setUser(session.user))

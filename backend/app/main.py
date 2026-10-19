@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await cleaner
 
 
-app = FastAPI(title="Urumi Platform API", lifespan=lifespan)
+app = FastAPI(title="Relay Platform API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -141,7 +141,7 @@ def main() -> int:
     assert r.status_code == 200, r.text
     admin_token = r.json()["access_token"]
     admin_id = r.json()["user"]["id"]
-    session_cookie, set_cookie = r.cookies["urumi_session"], r.headers["set-cookie"].lower()
+    session_cookie, set_cookie = r.cookies["relay_session"], r.headers["set-cookie"].lower()
     assert r.json()["user"]["role"] == "admin"
     _ok("admin login returns a token with role=admin")
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
@@ -153,7 +153,7 @@ def main() -> int:
     _step("the dashboard's session is a cookie that page scripts cannot read")
     assert "httponly" in set_cookie and "samesite=strict" in set_cookie and "max-age=" in set_cookie, set_cookie
     _ok("sign in sets the session as an HttpOnly, SameSite=Strict cookie")
-    browser = httpx.Client(base_url=BASE_URL, timeout=10, cookies={"urumi_session": session_cookie})
+    browser = httpx.Client(base_url=BASE_URL, timeout=10, cookies={"relay_session": session_cookie})
     r = browser.get("/auth/me")
     assert r.status_code == 200 and r.json()["id"] == admin_id, r.text
     r = httpx.get(f"{BASE_URL}/auth/me")
@@ -645,10 +645,10 @@ def main() -> int:
     assert _redis(repo_root, "exists", f"chat_token:{chat_hash}") == "0"
     _ok("the member's chat token is revoked too, in the database and in the gateway's lookup cache")
     r = browser.post("/auth/logout", headers={"Origin": app_origin})
-    assert r.status_code == 204 and 'urumi_session=""' in r.headers["set-cookie"] and "max-age=0" in r.headers["set-cookie"].lower(), r.headers
+    assert r.status_code == 204 and 'relay_session=""' in r.headers["set-cookie"] and "max-age=0" in r.headers["set-cookie"].lower(), r.headers
     r = client.get("/auth/me", headers=admin_headers)  # the same token the cookie held
     assert r.status_code == 401, r.text
-    r = httpx.get(f"{BASE_URL}/auth/session", cookies={"urumi_session": session_cookie})
+    r = httpx.get(f"{BASE_URL}/auth/session", cookies={"relay_session": session_cookie})
     assert r.status_code == 200 and r.json() == {"user": None}, r.text
     browser.close()
     _ok("signing out in the browser clears the cookie and kills the token inside it")

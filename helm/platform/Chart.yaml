@@ -1,6 +1,6 @@
 apiVersion: v2
-name: urumi-platform
-description: The Urumi Platform - dashboard, gateway, databases and other components
+name: relay-platform
+description: The Relay Platform - dashboard, gateway, databases and other components
 type: application
 version: 0.1.1
 appVersion: 0.1.0

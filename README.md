@@ -1,4 +1,4 @@
-# Urumi: WooCommerce hosting with a team MCP gateway
+# Relay: WooCommerce hosting with a team MCP gateway
 
 A WooCommerce store on Kubernetes, with a team MCP gateway in front of it. An admin
 registers MCP servers once in a dashboard. Every team member then uses all of them
@@ -61,13 +61,13 @@ kubectl get nodes
 images (Postgres, Redis, MySQL, WordPress) are downloaded by the cluster itself.
 
 ```sh
-docker build -t urumi-backend:0.1.0 backend
-docker build -t urumi-gateway:0.1.0 gateway
-docker build -t urumi-frontend:0.2.0 frontend
-docker build -t urumi-woo-mcp:0.1.0 woo-mcp
-docker build -t urumi-risk-mcp:0.1.0 risk-mcp
-docker build -t urumi-fulfilment-mcp:0.1.0 fulfilment-mcp
-k3d image import -c urumi urumi-backend:0.1.0 urumi-gateway:0.1.0 urumi-frontend:0.2.0 urumi-woo-mcp:0.1.0 urumi-risk-mcp:0.1.0 urumi-fulfilment-mcp:0.1.0
+docker build -t relay-backend:0.1.0 backend
+docker build -t relay-gateway:0.1.0 gateway
+docker build -t relay-frontend:0.2.0 frontend
+docker build -t relay-woo-mcp:0.1.0 woo-mcp
+docker build -t relay-risk-mcp:0.1.0 risk-mcp
+docker build -t relay-fulfilment-mcp:0.1.0 fulfilment-mcp
+k3d image import -c urumi relay-backend:0.1.0 relay-gateway:0.1.0 relay-frontend:0.2.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0
 ```
 
 **3. The secrets.** No secret is in the charts or in git. This writes two git-ignored files
@@ -179,13 +179,13 @@ named `<server>__<tool>`, for example `woo-demo__list_orders` and `risk__score_o
 Claude Code:
 
 ```sh
-claude mcp add --transport http urumi http://mcp.127.0.0.1.nip.io/mcp --header "Authorization: Bearer umk_..."
+claude mcp add --transport http relay http://mcp.127.0.0.1.nip.io/mcp --header "Authorization: Bearer umk_..."
 ```
 
 Cursor, in `~/.cursor/mcp.json`:
 
 ```json
-{ "mcpServers": { "urumi": { "url": "http://mcp.127.0.0.1.nip.io/mcp", "headers": { "Authorization": "Bearer umk_..." } } } }
+{ "mcpServers": { "relay": { "url": "http://mcp.127.0.0.1.nip.io/mcp", "headers": { "Authorization": "Bearer umk_..." } } } }
 ```
 
 MCP Inspector: `npx @modelcontextprotocol/inspector`, transport **Streamable HTTP**, the same
@@ -275,9 +275,9 @@ What the server needs: Ubuntu 24.04 with a public IPv4 address, at least 4 GB of
 5. **The images:** build them as in local step 2, then copy them to the server:
 
    ```sh
-   docker save -o urumi-images.tar urumi-backend:0.1.0 urumi-gateway:0.1.0 urumi-frontend:0.2.0 urumi-woo-mcp:0.1.0 urumi-risk-mcp:0.1.0 urumi-fulfilment-mcp:0.1.0
-   scp urumi-images.tar <user>@<server>:
-   ssh <user>@<server> 'sudo k3s ctr images import urumi-images.tar && rm urumi-images.tar'
+   docker save -o relay-images.tar relay-backend:0.1.0 relay-gateway:0.1.0 relay-frontend:0.2.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0
+   scp relay-images.tar <user>@<server>:
+   ssh <user>@<server> 'sudo k3s ctr images import relay-images.tar && rm relay-images.tar'
    ```
 
 6. **cert-manager and two ClusterIssuers**, Let's Encrypt's staging server (test certificates,

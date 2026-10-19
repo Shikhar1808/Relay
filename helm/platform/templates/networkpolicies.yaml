@@ -21,7 +21,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        {{- include "urumi.fromTraefik" . | nindent 8 }}
+        {{- include "relay.fromTraefik" . | nindent 8 }}
       ports:
         - { port: 3000, protocol: TCP }
 ---
@@ -36,7 +36,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        {{- include "urumi.fromTraefik" . | nindent 8 }}
+        {{- include "relay.fromTraefik" . | nindent 8 }}
         - podSelector:
             matchLabels: { app: gateway }
       ports:
@@ -54,7 +54,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        {{- include "urumi.fromTraefik" . | nindent 8 }}
+        {{- include "relay.fromTraefik" . | nindent 8 }}
       ports:
         - { port: 8080, protocol: TCP }
     - from:
@@ -134,7 +134,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        {{- include "urumi.fromTraefik" . | nindent 8 }}
+        {{- include "relay.fromTraefik" . | nindent 8 }}
       ports:
         - { port: 8089, protocol: TCP }
 {{- end }}

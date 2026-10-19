@@ -1,5 +1,5 @@
 [project]
-name = "urumi-risk-mcp"
+name = "relay-risk-mcp"
 version = "0.1.0"
 description = "Risk check MCP server: scores orders with fixed rules, for the gateway only"
 requires-python = ">=3.12"

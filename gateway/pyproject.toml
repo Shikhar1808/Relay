@@ -1,5 +1,5 @@
 [project]
-name = "urumi-mcp-gateway"
+name = "relay-mcp-gateway"
 version = "0.1.0"
 description = "MCP gateway: one authenticated /mcp endpoint in front of the registered upstream MCP servers"
 requires-python = ">=3.12"

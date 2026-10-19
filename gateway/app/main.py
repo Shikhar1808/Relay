@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 # One HTTP client for token resolution, shared by every request.
 _resolve_http = httpx2.AsyncClient(timeout=httpx2.Timeout(5))
 
-server = Server("urumi-gateway", on_list_tools=list_tools, on_call_tool=call_tool)
+server = Server("relay-gateway", on_list_tools=list_tools, on_call_tool=call_tool)
 _mcp_app = server.streamable_http_app(
     # No session lives in this process, so any replica can answer any request.
     stateless_http=True,

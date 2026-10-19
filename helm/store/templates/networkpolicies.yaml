@@ -20,7 +20,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        {{- include "urumi.fromTraefik" . | nindent 8 }}
+        {{- include "relay.fromTraefik" . | nindent 8 }}
         - podSelector:
             matchLabels: { app: woo-mcp }
       ports:
@@ -54,7 +54,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        {{- include "urumi.fromGateway" . | nindent 8 }}
+        {{- include "relay.fromGateway" . | nindent 8 }}
       ports:
         - { port: 8000, protocol: TCP }
 {{- if .Values.tls.enabled }}
@@ -69,7 +69,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        {{- include "urumi.fromTraefik" . | nindent 8 }}
+        {{- include "relay.fromTraefik" . | nindent 8 }}
       ports:
         - { port: 8089, protocol: TCP }
 {{- end }}

@@ -1,6 +1,6 @@
-import { blade } from "./ui";
+import { markLine } from "./ui";
 
-/** Frame for the signed-out pages: the ink panel with the blade on one side, the form on the other. */
+/** Frame for the signed-out pages: the ink panel with the mark's line on one side, the form on the other. */
 export function AuthShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
@@ -14,9 +14,9 @@ export function AuthShell({ title, children }: { title: string; children: React.
           strokeWidth="0.06"
           strokeLinecap="round"
         >
-          <path d={blade} />
+          <path d={markLine} />
         </svg>
-        <p className="relative font-display text-6xl font-light tracking-tight lg:text-8xl">urumi</p>
+        <p className="relative font-display text-6xl font-light tracking-tight lg:text-8xl">relay</p>
         <p className="relative mt-3 max-w-sm text-lg text-canvas/75">
           Your stores, your team, and what each person can reach.
         </p>

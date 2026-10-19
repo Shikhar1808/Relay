@@ -1,4 +1,4 @@
-# For the VPS only, and part of neither chart: a ClusterIssuer belongs to the cluster, not to Urumi.
+# For the VPS only, and part of neither chart: a ClusterIssuer belongs to the cluster, not to Relay.
 # It tells cert-manager which certificate authority to ask. Staging gives test certificates
 # (browsers warn) with generous limits; prod gives real ones, 5 a week for the same names.
 # Both prove the domain over plain http (HTTP-01), answered through Traefik on port 80.

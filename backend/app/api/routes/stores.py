@@ -97,7 +97,7 @@ async def assign_member(
     background.add_task(
         send_email,
         member.email,
-        *notice_email(member.name, "You were added to a Urumi store", f"An admin gave you access to the store \"{store.name}\" ({store.url})."),
+        *notice_email(member.name, "You were added to a Relay store", f"An admin gave you access to the store \"{store.name}\" ({store.url})."),
     )
     return assignment
 
@@ -132,7 +132,7 @@ async def remove_member(
         background.add_task(
             send_email,
             member.email,
-            *notice_email(member.name, "You were removed from a Urumi store", f"An admin removed your access to the store \"{store.name}\"."),
+            *notice_email(member.name, "You were removed from a Relay store", f"An admin removed your access to the store \"{store.name}\"."),
         )
 
 

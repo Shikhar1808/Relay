@@ -9,7 +9,7 @@ const chakra = Chakra_Petch({ variable: "--font-chakra", subsets: ["latin"], wei
 const instrument = Instrument_Sans({ variable: "--font-instrument", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Urumi",
+  title: "Relay",
   description: "Run your stores, your team and their access from one place.",
 };
 

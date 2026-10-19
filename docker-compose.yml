@@ -1,3 +1,4 @@
+name: relay   # the project name: containers, images and volumes are relay-*
 services:
   postgres:
     image: postgres:18-alpine
@@ -47,7 +48,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-resend}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-Urumi <onboarding@resend.dev>}
+      SMTP_FROM: ${SMTP_FROM:-Relay <onboarding@resend.dev>}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       # The first store and its MCP server, registered on startup like any later store
       # (app/services/bootstrap.py). Its tools are named woo-<subdomain>__<tool>.

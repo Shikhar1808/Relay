@@ -5,4 +5,4 @@ tls:
   enabled: true
   clusterIssuer: letsencrypt-staging   # letsencrypt-prod once the test certificate works
 # Resend delivers to anyone only from an address on a domain you verified there.
-smtpFrom: "Urumi <no-reply@shikharsaxena.space>"
+smtpFrom: "Relay <no-reply@shikharsaxena.space>"

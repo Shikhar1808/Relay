@@ -598,6 +598,31 @@ wheels = [
 ]
 
 [[package]]
+name = "relay-risk-mcp"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "mcp" },
+    { name = "pydantic-settings" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcp", specifier = "==2.3.0" },
+    { name = "pydantic-settings", specifier = "==2.6.1" },
+    { name = "uvicorn", specifier = "==0.54.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = "==9.1.1" }]
+
+[[package]]
 name = "rpds-py"
 version = "2026.9.1"
 source = { registry = "https://pypi.org/simple" }
@@ -760,31 +785,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/a3/26/b09b8010994eccc3c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl", hash = "sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147", size = 14750, upload-time = "2026-08-12T12:37:24.648Z" },
 ]
-
-[[package]]
-name = "urumi-risk-mcp"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "mcp" },
-    { name = "pydantic-settings" },
-    { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "mcp", specifier = "==2.3.0" },
-    { name = "pydantic-settings", specifier = "==2.6.1" },
-    { name = "uvicorn", specifier = "==0.54.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = "==9.1.1" }]
 
 [[package]]
 name = "uvicorn"

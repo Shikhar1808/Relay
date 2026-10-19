@@ -1,5 +1,5 @@
 [project]
-name = "urumi-woo-mcp"
+name = "relay-woo-mcp"
 version = "0.1.0"
 description = "WooCommerce MCP server: one store's products and orders as tools, for the gateway only"
 requires-python = ">=3.12"

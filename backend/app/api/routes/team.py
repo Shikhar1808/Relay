@@ -135,7 +135,7 @@ async def deactivate_member(
         background.add_task(
             send_email,
             member.email,
-            *notice_email(member.name, "Your Urumi account was deactivated", "An admin deactivated your Urumi account. You can no longer log in."),
+            *notice_email(member.name, "Your Relay account was deactivated", "An admin deactivated your Relay account. You can no longer log in."),
         )
 
 
@@ -175,7 +175,7 @@ async def issue_api_key(
     background.add_task(
         send_email,
         member.email,
-        *notice_email(member.name, "A Urumi API key was issued for you", f"An admin issued a gateway API key ({prefix}…) for your account."),
+        *notice_email(member.name, "A Relay API key was issued for you", f"An admin issued a gateway API key ({prefix}…) for your account."),
     )
 
     return ApiKeyCreatedOut(id=key.id, raw_key=raw_key, prefix=prefix, name=key.name, created_at=key.created_at)
@@ -217,7 +217,7 @@ async def revoke_api_key(
         background.add_task(
             send_email,
             member.email,
-            *notice_email(member.name, "Your Urumi API key was revoked", f"An admin revoked your gateway API key ({key.prefix}…). It no longer works."),
+            *notice_email(member.name, "Your Relay API key was revoked", f"An admin revoked your gateway API key ({key.prefix}…). It no longer works."),
         )
     return key
 

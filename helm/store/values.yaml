@@ -18,8 +18,8 @@ store:
 
 imagePullPolicy: IfNotPresent
 images:
-  wooMcp: urumi-woo-mcp:0.1.0
-  fulfilmentMcp: urumi-fulfilment-mcp:0.1.0
+  wooMcp: relay-woo-mcp:0.1.0
+  fulfilmentMcp: relay-fulfilment-mcp:0.1.0
   wordpress: wordpress:7.1-php8.3-apache
   wpCli: wordpress:cli-2.12-php8.3
   mysql: mysql:8.4

@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_user: str = "resend"
     smtp_password: str | None = None
-    smtp_from: str = "Urumi <onboarding@resend.dev>"
+    smtp_from: str = "Relay <onboarding@resend.dev>"
 
     # Base of the links in invite/reset emails: the frontend's public URL
     # (it serves /set-password).

@@ -30,7 +30,7 @@ from app.core.security import decode_access_token, sha256_hex
 from app.db.models import Role, User
 from app.db.session import get_db
 
-SESSION_COOKIE = "urumi_session"
+SESSION_COOKIE = "relay_session"
 _READ_ONLY = {"GET", "HEAD", "OPTIONS"}
 _bearer = HTTPBearer(auto_error=False)
 # Connecting is retried for about two seconds: right after Redis restarts, its new pod takes a

@@ -68,7 +68,7 @@ async def _set_password(db: AsyncSession, user: User, new_password: str, backgro
     background.add_task(
         send_email,
         user.email,
-        *notice_email(user.name, "Your Urumi password was changed", "The password for your Urumi account was just changed."),
+        *notice_email(user.name, "Your Relay password was changed", "The password for your Relay account was just changed."),
     )
 
 
