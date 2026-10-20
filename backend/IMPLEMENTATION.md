@@ -317,6 +317,7 @@ backend/
 | POST | `/team/members/{id}/resend-invite` | JWT (admin) | user, 60/min | Emails a fresh invite link; the old one stops working |
 | GET | `/team/members` | JWT (admin) | user, 60/min | Lists all users |
 | DELETE | `/team/members/{id}` | JWT (admin) | user, 60/min | Deactivates a member; 409 if target is the admin |
+| POST | `/team/members/{id}/reactivate` | JWT (admin) | user, 60/min | Undoes a deactivation: a new temporary password (shown once, the old one stops working) and a new invite link; 409 if already active. Their stores and any unrevoked key work again |
 | POST | `/team/members/{id}/api-keys` | JWT (admin) | user, 60/min | Issues a key for that member; 409 if they already have an active one |
 | GET | `/team/members/{id}/api-keys` | JWT (admin) | user, 60/min | Lists a member's keys (hash never returned) |
 | POST | `/team/members/{id}/api-keys/{key_id}/revoke` | JWT (admin) | user, 60/min | Revokes a key |

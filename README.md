@@ -176,6 +176,9 @@ once. On **Stores**, **Manage members** adds them to a store: a member sees a st
 servers and data only after that. The member signs in and issues their own key on
 **API key**. The admin can issue or revoke any member's key on **Team**.
 
+**Deactivate** stops a member signing in; their stores stay assigned. **Reactivate** (on a deactivated member) brings them back with a new
+temporary password, shown once, and a new invite link. Their API key was never revoked by deactivating, so revoke it first if it should not work again.
+
 On plain http the **Copy** button does nothing (browsers allow the clipboard only on https
 or localhost): select the key and copy it by hand.
 
