@@ -6,3 +6,5 @@ tls:
   clusterIssuer: letsencrypt-staging   # letsencrypt-prod once the test certificate works
 # Resend delivers to anyone only from an address on a domain you verified there.
 smtpFrom: "Relay <no-reply@shikharsaxena.space>"
+storeWorker:
+  valuesFile: values-prod.yaml

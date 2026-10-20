@@ -1,6 +1,7 @@
 # Server 3: shipping this store's orders. Its records are in the platform's Postgres, in the
 # database "fulfilment", which only its own role can open. Registered by hand as
 # http://fulfilment-mcp.<this namespace>.svc.cluster.local:8000/mcp, with this store's store_id.
+{{- if .Values.fulfilment.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -55,3 +56,4 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
+{{- end }}

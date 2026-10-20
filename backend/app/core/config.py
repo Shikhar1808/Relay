@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     woo_mcp_url: str | None = None
     woo_mcp_token: str | None = None
 
+    # Stores created from the dashboard. The API makes the row with the address
+    # <scheme>://<subdomain>.<domain>; the store worker (app/worker.py) installs helm/store
+    # with this values file, which must name the same domain and scheme.
+    store_domain: str = "127.0.0.1.nip.io"
+    store_scheme: str = "http"
+    max_stores: int = 5
+    store_values_file: str = "/charts/store/values-local.yaml"
+    # Who the worker is in the cluster: each store namespace gets a RoleBinding for this account.
+    platform_namespace: str = "urumi"
+    worker_service_account: str = "relay-store-worker"
+
     # The chat agent (app/agent). The model is reached in the OpenAI chat format, so the
     # address can be a provider or an LLM gateway in front of several. With no key the
     # chat says it is not set up and everything else works.

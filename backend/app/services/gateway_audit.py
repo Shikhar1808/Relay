@@ -7,12 +7,14 @@ Both fail closed with 503. A registry change the gateway could not record is
 not made.
 """
 import asyncio
+import contextlib
 import http.client
 import json
 import urllib.request
 from typing import Any
 
 from fastapi import HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import User
@@ -38,19 +40,33 @@ async def _gateway(unavailable: str, *call: Any) -> Any:
 
 
 async def record_admin_event(
-    action: str, admin: User, request: Request, upstream: str, changes: dict[str, Any], outcome: str = "ok"
+    action: str, admin: User, request: Request | None, upstream: str, changes: dict[str, Any], outcome: str = "ok"
 ) -> None:
     """Call this BEFORE committing the change it describes: it raises 503 if the event was not stored.
-    If the commit then fails, call it again with outcome="failed"; the log cannot take a row back."""
+    If the commit then fails, call it again with outcome="failed"; the log cannot take a row back.
+    `request` is None for a change the store worker makes (app/worker.py)."""
     event = {
         "action": action,
         "outcome": outcome,
         "user_id": str(admin.id),
         "upstream": upstream,
-        "client_ip": request.client.host if request.client else None,
+        "client_ip": request.client.host if request and request.client else None,
         "changes": changes,
     }
     await _gateway("The audit log is unavailable, so this change was not made", "POST", "", event)
+
+
+async def record_and_commit(db: AsyncSession, action: str, admin: User, request: Request | None, slug: str, changes: dict) -> None:
+    """Records the change in the audit log, then commits it. Raises 503 if it cannot be recorded."""
+    await record_admin_event(action, admin, request, slug, changes)
+    try:
+        await db.commit()
+    except Exception:
+        # The log now says this change was made, and its rows cannot be taken back: add the correction.
+        # Best effort: if that fails too, the error the admin gets is still the commit's.
+        with contextlib.suppress(HTTPException):
+            await record_admin_event(action, admin, request, slug, changes, outcome="failed")
+        raise
 
 
 async def read_events(query: str) -> list[dict[str, Any]]:

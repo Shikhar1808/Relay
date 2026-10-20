@@ -40,3 +40,16 @@ traefik:
 # The script wp-init runs: --set-file scripts.wpInit=woo-mcp/deploy/wp-init.sh
 scripts:
   wpInit: ""
+
+quota:
+  cpu: "1"
+  memory: 2Gi
+  memoryLimit: 4Gi
+  storage: 10Gi
+
+fulfilment:
+  enabled: true
+  # cpu: "1"
+  # memory: 2Gi
+  # memoryLimit: 4Gi
+  # storage: 10Gi

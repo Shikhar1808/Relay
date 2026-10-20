@@ -63,6 +63,9 @@ spec:
             # Believe X-Forwarded-For only from Traefik's address range; otherwise every caller
             # looks like Traefik, and all sign-ins share one rate limit.
             - { name: FORWARDED_ALLOW_IPS, value: {{ .Values.podCidr | quote }} }
+            - { name: STORE_DOMAIN, value: {{ .Values.domain | quote }} }
+            - { name: STORE_SCHEME, value: {{ .Values.scheme | quote }} }
+            - { name: MAX_STORES, value: {{ .Values.maxStores | quote }} }
           readinessProbe:
             httpGet: { path: /health, port: http }
             periodSeconds: 5

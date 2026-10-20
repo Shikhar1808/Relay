@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Role, Store, StoreMember, User
 
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
 # Same shape as an upstream server's slug (app/schemas/upstreams.py): no underscores,
 # because a store's MCP server is registered as woo-<subdomain> and tools are slug__tool.
 _SUBDOMAIN_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
@@ -25,23 +24,6 @@ def check_subdomain(subdomain: str) -> str:
     if subdomain in _RESERVED_SUBDOMAINS:
         raise ValueError(f'the store subdomain "{subdomain}" is reserved for the platform')
     return subdomain
-
-
-def slugify(name: str) -> str:
-    slug = _SLUG_RE.sub("-", name.strip().lower()).strip("-")
-    return slug or "store"
-
-
-async def unique_slug(db: AsyncSession, name: str) -> str:
-    base = slugify(name)
-    candidate = base
-    suffix = 2
-    while True:
-        existing = await db.execute(select(Store.id).where(Store.slug == candidate))
-        if existing.scalar_one_or_none() is None:
-            return candidate
-        candidate = f"{base}-{suffix}"
-        suffix += 1
 
 
 async def stores_for_user(db: AsyncSession, user: User) -> list[Store]:

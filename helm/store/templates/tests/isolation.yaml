@@ -27,7 +27,7 @@ spec:
           # testing at once would pass even with a broken policy.
           time.sleep(3)
           failed = False
-          for host in ("woo-mcp", "fulfilment-mcp"):
+          for host in ["woo-mcp"{{ if .Values.fulfilment.enabled }}, "fulfilment-mcp"{{ end }}]:
               socket.getaddrinfo(host, 8000)  # a missing Service fails the test, it does not pass it
               try:
                   socket.create_connection((host, 8000), timeout=5).close()

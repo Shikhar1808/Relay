@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   Avatar,
@@ -9,6 +9,7 @@ import {
   Card,
   Field,
   formatDate,
+  formatDateTime,
   IconBox,
   inputStyles,
   Notice,
@@ -22,9 +23,18 @@ import { api, type Store, type User } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useData } from "@/lib/use-data";
 
+// The store worker is still on these; the page reloads until it is done.
+const BUSY: Store["status"][] = ["pending", "provisioning", "deleting"];
+
 export default function StoresPage() {
   const { user } = useAuth();
   const { data: stores, error, reload } = useData<Store[]>("/stores");
+  const busy = stores?.some((store) => BUSY.includes(store.status));
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setInterval(() => void reload(), 3000);
+    return () => clearInterval(timer);
+  }, [busy, reload]);
 
   if (error) return <Notice tone="error">{error}</Notice>;
   if (!stores) return <p className="text-ink-soft">Loading…</p>;
@@ -32,6 +42,7 @@ export default function StoresPage() {
 }
 
 function StoreAddress({ store }: { store: Store }) {
+  if (store.url && store.status !== "ready") return <span className="break-all text-ink-soft">{store.url}</span>;
   return store.url ? (
     <a href={store.url} className="break-all text-accent underline underline-offset-4">
       {store.url}
@@ -100,7 +111,9 @@ function MemberStores({ stores }: { stores: Store[] }) {
 function AdminStores({ stores, reload }: { stores: Store[]; reload: () => Promise<void> }) {
   const { busy, error, run } = useAction();
   const [name, setName] = useState("");
+  const [subdomain, setSubdomain] = useState("");
   const [openId, setOpenId] = useState<string>();
+  const [deletingId, setDeletingId] = useState<string>();
   const { data: people } = useData<User[]>("/team/members");
   const members = people?.filter((person) => person.role === "member" && person.is_active) ?? [];
   const count = (...statuses: Store["status"][]) => stores.filter((store) => statuses.includes(store.status)).length;
@@ -124,8 +137,9 @@ function AdminStores({ stores, reload }: { stores: Store[]; reload: () => Promis
           onSubmit={(event) => {
             event.preventDefault();
             void run(async () => {
-              await api("/stores", { body: { name } });
+              await api("/stores", { body: { name, subdomain } });
               setName("");
+              setSubdomain("");
               await reload();
             });
           }}
@@ -136,6 +150,16 @@ function AdminStores({ stores, reload }: { stores: Store[]; reload: () => Promis
             maxLength={200}
             value={name}
             onChange={(e) => setName(e.target.value)}
+            className="min-w-56 flex-1"
+          />
+          <Field
+            label="Subdomain"
+            hint="Lowercase letters, digits and hyphens. The store's address starts with it, and it cannot change."
+            required
+            maxLength={30}
+            pattern="[a-z0-9]+(-[a-z0-9]+)*"
+            value={subdomain}
+            onChange={(e) => setSubdomain(e.target.value)}
             className="min-w-56 flex-1"
           />
           <Button type="submit" disabled={busy}>
@@ -169,14 +193,40 @@ function AdminStores({ stores, reload }: { stores: Store[]; reload: () => Promis
                 <p className="mt-1 text-sm">
                   <StoreAddress store={store} />
                 </p>
-                <Button
-                  variant="quiet"
-                  className="mt-4"
-                  aria-expanded={open}
-                  onClick={() => setOpenId(open ? undefined : store.id)}
-                >
-                  {open ? "Hide members" : "Manage members"}
-                </Button>
+                <p className="mt-1 text-sm text-ink-soft">Created {formatDateTime(store.created_at)}</p>
+                {store.step && <p className="mt-3 text-sm">Now: {store.step}…</p>}
+                {store.error && (
+                  <div className="mt-3">
+                    <Notice tone="error">{store.error}</Notice>
+                  </div>
+                )}
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <Button variant="quiet" aria-expanded={open} onClick={() => setOpenId(open ? undefined : store.id)}>
+                    {open ? "Hide members" : "Manage members"}
+                  </Button>
+                  {store.status === "failed" && (
+                    <Button
+                      variant="quiet"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          await api(`/stores/${store.id}/retry`, { method: "POST" });
+                          await reload();
+                        })
+                      }
+                    >
+                      Retry
+                    </Button>
+                  )}
+                  {(store.status === "ready" || store.status === "failed") && deletingId !== store.id && (
+                    <Button variant="danger" onClick={() => setDeletingId(store.id)}>
+                      Delete store
+                    </Button>
+                  )}
+                </div>
+                {deletingId === store.id && (
+                  <DeleteStore store={store} onClose={() => setDeletingId(undefined)} reload={reload} />
+                )}
                 {open && <StoreMembers store={store} candidates={members} />}
               </li>
             );
@@ -184,6 +234,49 @@ function AdminStores({ stores, reload }: { stores: Store[]; reload: () => Promis
         </ul>
       )}
     </>
+  );
+}
+
+/** Deleting removes the store's server, its pods, its volumes and its secrets, so it asks for the name again and a reason. */
+function DeleteStore({ store, onClose, reload }: { store: Store; onClose: () => void; reload: () => Promise<void> }) {
+  const { busy, error, run } = useAction();
+  const [confirmName, setConfirmName] = useState("");
+  const [reason, setReason] = useState("");
+
+  return (
+    <form
+      className="arrive mt-4 space-y-4 border-t border-line pt-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void run(async () => {
+          await api(`/stores/${store.id}`, { method: "DELETE", body: { confirm_name: confirmName, reason } });
+          onClose();
+          await reload();
+        });
+      }}
+    >
+      <p className="text-sm">
+        This removes the store&apos;s MCP server, its WordPress and database, and everything stored in them. It cannot be
+        undone.
+      </p>
+      <Field
+        label={`Type "${store.name}" to confirm`}
+        required
+        autoComplete="off"
+        value={confirmName}
+        onChange={(e) => setConfirmName(e.target.value)}
+      />
+      <Field label="Reason (kept in the audit log)" required maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+      <div className="flex flex-wrap gap-3">
+        <Button type="submit" variant="danger" disabled={busy || confirmName !== store.name || !reason.trim()}>
+          Delete store
+        </Button>
+        <Button variant="quiet" onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+      <Notice tone="error">{error}</Notice>
+    </form>
   );
 }
 

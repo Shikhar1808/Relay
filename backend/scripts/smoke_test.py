@@ -206,7 +206,7 @@ def main() -> int:
         "/team/members", json={"email": f"long-{unique}@example.com", "name": "x" * 300}, headers=admin_headers
     )
     assert r.status_code == 422, r.text
-    r = client.post("/stores", json={"name": "x" * 300}, headers=admin_headers)
+    r = client.post("/stores", json={"name": "x" * 300, "subdomain": f"long-{unique}"}, headers=admin_headers)
     assert r.status_code == 422, r.text
     _ok("names too long for their column are rejected with 422, not a crash")
 
@@ -247,14 +247,19 @@ def main() -> int:
     assert r.status_code == 401, r.text
     _ok("resolve rejects the revoked key with 401")
 
-    _step("create store (stub)")
-    r = client.post("/stores", json={"name": f"Smoke Test Store {unique}"}, headers=admin_headers)
+    _step("create store (no store worker runs in compose, so it stays pending)")
+    r = client.post("/stores", json={"name": f"Smoke Test Store {unique}", "subdomain": f"smoke-{unique}"}, headers=admin_headers)
     assert r.status_code == 201, r.text
     store = r.json()
-    assert store["status"] == "ready"
-    assert store["url"].endswith(".stores.local")
+    assert store["status"] == "pending" and store["slug"] == f"smoke-{unique}"
+    assert store["url"].split("://")[1].startswith(f"smoke-{unique}.")
     store_id = store["id"]
     _ok(f"store created: {store['slug']} -> {store['url']}")
+    r = client.post("/stores", json={"name": "Another name", "subdomain": f"smoke-{unique}"}, headers=admin_headers)
+    assert r.status_code == 409, r.text
+    r = client.request("DELETE", f"/stores/{store_id}", json={"confirm_name": store["name"], "reason": "test"}, headers=admin_headers)
+    assert r.status_code == 409, r.text
+    _ok("a subdomain in use is refused, and a store the worker has not finished cannot be deleted")
 
     _step("member login; unassigned, they see no store and cannot chat")
     r = client.post("/auth/login", json={"email": member_email, "password": temp_password})
@@ -281,7 +286,7 @@ def main() -> int:
     _ok("member sees only their assigned store")
 
     _step("member permission boundary")
-    r = client.post("/stores", json={"name": "member cannot do this"}, headers=member_headers)
+    r = client.post("/stores", json={"name": "member cannot do this", "subdomain": f"member-{unique}"}, headers=member_headers)
     assert r.status_code == 403, r.text
     _ok("member cannot create a store")
 
@@ -320,10 +325,10 @@ def main() -> int:
     _ok("member can issue a new key after revoking the old one")
 
     _step("a member can be in several stores; chat and gateway see those and no others")
-    r = client.post("/stores", json={"name": f"Second Store {unique}"}, headers=admin_headers)
+    r = client.post("/stores", json={"name": f"Second Store {unique}", "subdomain": f"second-{unique}"}, headers=admin_headers)
     assert r.status_code == 201, r.text
     second_store_id = r.json()["id"]
-    r = client.post("/stores", json={"name": f"Third Store {unique}"}, headers=admin_headers)
+    r = client.post("/stores", json={"name": f"Third Store {unique}", "subdomain": f"third-{unique}"}, headers=admin_headers)
     assert r.status_code == 201, r.text
     third_store_id = r.json()["id"]  # the member is never added here
 

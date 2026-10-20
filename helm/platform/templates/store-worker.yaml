@@ -1,0 +1,114 @@
+# The store worker (backend/app/worker.py): creates and deletes the stores made from the
+# dashboard with kubectl and helm. The only pod of the platform that talks to the Kubernetes API.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: relay-store-worker
+---
+# Its rights across the cluster: make and remove a namespace, and give itself the installer's
+# rights inside one. "bind" with resourceNames: it may hand out that one role and no other.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: relay-store-worker
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, patch, delete]   # list, watch: "kubectl delete --wait" watches it go
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [get, create, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [bind]
+    resourceNames: [relay-store-installer]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: relay-store-worker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: relay-store-worker
+subjects:
+  - kind: ServiceAccount
+    name: relay-store-worker
+    namespace: {{ .Release.Namespace }}
+---
+# Everything installing helm/store takes, nothing more. Bound nowhere here: the worker binds it
+# inside each store namespace it makes (a RoleBinding), so these rights exist only there.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: relay-store-installer
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, secrets, configmaps, persistentvolumeclaims, resourcequotas, limitranges]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [traefik.io]
+    resources: [middlewares]        # the store chart's Traefik Middleware
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: store-worker
+spec:
+  replicas: 1                   # two copies would both pick up the same store
+  strategy: { type: Recreate }  # and never two at once, not even during an update
+  selector:
+    matchLabels: { app: store-worker }
+  template:
+    metadata:
+      labels: { app: store-worker }
+    spec:
+      serviceAccountName: relay-store-worker
+      automountServiceAccountToken: true   # the one pod that needs it: kubectl and helm sign in with it
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: store-worker
+          image: {{ .Values.images.storeWorker }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          env:
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: POSTGRES_PASSWORD } } }
+            - { name: DATABASE_URL, value: "postgresql+asyncpg://platform:$(POSTGRES_PASSWORD)@postgres:5432/platform" }
+            - { name: REDIS_URL, value: "redis://redis:6379/0" }   # tells the gateway a server was added
+            # The backend's settings require it at start; the worker never signs anything with it.
+            - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: JWT_SECRET } } }
+            # Encrypts each new store's MCP token before it is stored, as the Servers page does.
+            - { name: GATEWAY_ENCRYPTION_KEY, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: GATEWAY_ENCRYPTION_KEY } } }
+            # For the gateway's audit log, where every server it adds or removes is recorded.
+            - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: INTERNAL_SERVICE_TOKEN } } }
+            - { name: GATEWAY_INTERNAL_URL, value: "http://gateway:9090" }
+            - { name: STORE_VALUES_FILE, value: "/charts/store/{{ .Values.storeWorker.valuesFile }}" }
+            - { name: PLATFORM_NAMESPACE, value: {{ .Release.Namespace }} }
+          # The worker touches this file after every look at the stores (every 3 s).
+          livenessProbe:
+            exec:
+              command: [python, -c, "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-alive') > 60)"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 1Gi }   # each helm run takes about 100Mi, and several stores run at once
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }   # helm's and kubectl's caches (HOME=/tmp) and the liveness file
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+      volumes:
+        - { name: tmp, emptyDir: {} }

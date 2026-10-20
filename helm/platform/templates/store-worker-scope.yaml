@@ -1,0 +1,33 @@
+# RBAC cannot say "only namespaces named store-*". Without this, the worker could bind the
+# installer role in any namespace (kube-system included), or delete one. The API server refuses it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: relay-store-worker-scope
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [namespaces]
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [rolebindings]
+  matchConditions:
+    - name: only-the-store-worker
+      expression: request.userInfo.username == "system:serviceaccount:{{ .Release.Namespace }}:relay-store-worker"
+  validations:
+    # For a namespace the name is the namespace; for a RoleBinding, the namespace it is in.
+    - expression: '(request.resource.resource == "namespaces" ? request.name : request.namespace).startsWith("store-")'
+      message: the store worker may only touch namespaces named store-*
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: relay-store-worker-scope
+spec:
+  policyName: relay-store-worker-scope
+  validationActions: [Deny]

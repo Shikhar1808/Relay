@@ -8,7 +8,6 @@ instead of waiting for its periodic refresh.
 Every change is written to the gateway's audit log before it is committed
 (who, which server, what was sent). If that fails, the change is refused.
 """
-import contextlib
 import json
 import uuid
 from typing import Any
@@ -25,7 +24,7 @@ from app.core.deps import common_rate_limit, get_redis, require_admin
 from app.db.models import Store, UpstreamServer, User
 from app.db.session import get_db
 from app.schemas.upstreams import CreateUpstreamRequest, UpdateUpstreamRequest, UpstreamOut
-from app.services.gateway_audit import record_admin_event
+from app.services.gateway_audit import record_and_commit
 
 UPSTREAMS_CHANGED = "upstreams:changed"
 
@@ -57,19 +56,6 @@ def _changes(body: BaseModel) -> dict:
     if "credential" in sent:
         sent["credential"] = "set" if sent["credential"] else "none"
     return sent
-
-
-async def _record_and_commit(db: AsyncSession, action: str, admin: User, request: Request, slug: str, changes: dict) -> None:
-    """Records the change in the audit log, then commits it. Raises 503 if it cannot be recorded."""
-    await record_admin_event(action, admin, request, slug, changes)
-    try:
-        await db.commit()
-    except Exception:
-        # The log now says this change was made, and its rows cannot be taken back: add the correction.
-        # Best effort: if that fails too, the error the admin gets is still the commit's.
-        with contextlib.suppress(HTTPException):
-            await record_admin_event(action, admin, request, slug, changes, outcome="failed")
-        raise
 
 
 async def _require_store(db: AsyncSession, store_id: uuid.UUID | None) -> None:
@@ -125,7 +111,7 @@ async def create_upstream(
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "An upstream server with this slug already exists") from exc
-    await _record_and_commit(db, "upstream.create", admin, request, server.slug, _changes(body))
+    await record_and_commit(db, "upstream.create", admin, request, server.slug, _changes(body))
     await db.refresh(server)
     await redis.publish(UPSTREAMS_CHANGED, server.slug)
     return _out(server)
@@ -161,7 +147,7 @@ async def update_upstream(
         # name, url, enabled and credential_header are NOT NULL: an explicit null means "leave as is".
         if value is not None or field == "store_id":
             setattr(server, field, value)
-    await _record_and_commit(db, "upstream.update", admin, request, server.slug, _changes(body))
+    await record_and_commit(db, "upstream.update", admin, request, server.slug, _changes(body))
     await db.refresh(server)
     await redis.publish(UPSTREAMS_CHANGED, server.slug)
     return _out(server)
@@ -177,5 +163,5 @@ async def delete_upstream(
 ) -> None:
     server = await _get(db, server_id)
     await db.delete(server)
-    await _record_and_commit(db, "upstream.delete", admin, request, server.slug, {})
+    await record_and_commit(db, "upstream.delete", admin, request, server.slug, {})
     await redis.publish(UPSTREAMS_CHANGED, server.slug)

@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.api.routes import upstreams
 from app.api.routes.upstreams import _changes
 from app.core.config import settings
 from app.schemas.upstreams import CreateUpstreamRequest, UpdateUpstreamRequest
@@ -64,6 +63,11 @@ async def test_an_event_that_was_not_stored_stops_the_change_with_503(gateway, f
     assert refused.value.status_code == 503 and "not made" in refused.value.detail
 
 
+async def test_a_change_the_store_worker_makes_has_no_client_address(gateway):
+    await gateway_audit.record_admin_event("upstream.create", ADMIN, None, "woo-shop", {})
+    assert json.loads(gateway.sent[0].data)["client_ip"] is None
+
+
 async def test_reading_passes_the_query_on_and_fails_with_503(gateway):
     gateway.answer = b'[{"seq": 3}]'
     assert await gateway_audit.read_events("?limit=5&category=admin") == [{"seq": 3}]
@@ -103,12 +107,12 @@ def steps(monkeypatch) -> list:
     async def record(action, admin, request, upstream, changes, outcome="ok"):
         log.append(("event", outcome))
 
-    monkeypatch.setattr(upstreams, "record_admin_event", record)
+    monkeypatch.setattr(gateway_audit, "record_admin_event", record)
     return log
 
 
 async def test_a_change_is_recorded_before_it_is_committed(steps):
-    await upstreams._record_and_commit(FakeDb(steps), "upstream.update", ADMIN, REQUEST, "woo", {})
+    await gateway_audit.record_and_commit(FakeDb(steps), "upstream.update", ADMIN, REQUEST, "woo", {})
     assert steps == [("event", "ok"), "commit"]
 
 
@@ -116,15 +120,15 @@ async def test_a_change_that_cannot_be_recorded_is_never_committed(steps, monkey
     async def unavailable(*args, **kwargs):
         raise HTTPException(503, "The audit log is unavailable, so this change was not made")
 
-    monkeypatch.setattr(upstreams, "record_admin_event", unavailable)
+    monkeypatch.setattr(gateway_audit, "record_admin_event", unavailable)
     with pytest.raises(HTTPException):
-        await upstreams._record_and_commit(FakeDb(steps), "upstream.update", ADMIN, REQUEST, "woo", {})
+        await gateway_audit.record_and_commit(FakeDb(steps), "upstream.update", ADMIN, REQUEST, "woo", {})
     assert steps == []
 
 
 async def test_a_failed_commit_adds_a_correction_to_the_log_and_keeps_its_own_error(steps):
     with pytest.raises(ConnectionError):
-        await upstreams._record_and_commit(FakeDb(steps, commit_fails=True), "upstream.update", ADMIN, REQUEST, "woo", {})
+        await gateway_audit.record_and_commit(FakeDb(steps, commit_fails=True), "upstream.update", ADMIN, REQUEST, "woo", {})
     assert steps == [("event", "ok"), "commit", ("event", "failed")]
 
 
@@ -136,7 +140,7 @@ async def test_a_correction_that_cannot_be_sent_does_not_hide_the_commit_error(m
         if outcome == "failed":
             raise HTTPException(503, "The audit log is unavailable")
 
-    monkeypatch.setattr(upstreams, "record_admin_event", record)
+    monkeypatch.setattr(gateway_audit, "record_admin_event", record)
     with pytest.raises(ConnectionError):
-        await upstreams._record_and_commit(FakeDb([], commit_fails=True), "upstream.update", ADMIN, REQUEST, "woo", {})
+        await gateway_audit.record_and_commit(FakeDb([], commit_fails=True), "upstream.update", ADMIN, REQUEST, "woo", {})
     assert sent == ["ok", "failed"]

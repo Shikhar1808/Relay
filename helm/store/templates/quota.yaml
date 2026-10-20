@@ -1,0 +1,26 @@
+# Limits for this store's namespace, so one store cannot starve the others or fill the disk.
+# Helm creates these two before any pod, so they apply to every pod of the release.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: store-quota
+spec:
+  hard:
+    requests.cpu: {{ .Values.quota.cpu | quote }}
+    requests.memory: {{ .Values.quota.memory }}
+    limits.memory: {{ .Values.quota.memoryLimit }}
+    requests.storage: {{ .Values.quota.storage }}
+    persistentvolumeclaims: "4"
+    pods: "10"
+---
+# A container that names no resources gets these, instead of being refused by the quota.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: store-limits
+spec:
+  limits:
+    - type: Container
+      default: { memory: 256Mi }                  # its limit
+      defaultRequest: { cpu: 50m, memory: 64Mi }  # its request
+      max: { memory: 1Gi }                        # MySQL's limit, the largest in the chart

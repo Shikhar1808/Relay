@@ -3,9 +3,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.auth import LoginRequest
-from app.schemas.stores import CreateStoreRequest
+from app.schemas.stores import CreateStoreRequest, DeleteStoreRequest
 from app.schemas.upstreams import CreateUpstreamRequest, UpdateUpstreamRequest
-from app.services.stores import slugify
 
 BASE = {"name": "Woo", "slug": "woo", "url": "http://woo-mcp:9000/mcp"}
 
@@ -104,15 +103,21 @@ def test_login_password_rule(password):
 
 
 def test_store_name_is_trimmed_and_bounded():
-    assert CreateStoreRequest(name="  My Shop  ").name == "My Shop"
+    assert CreateStoreRequest(name="  My Shop  ", subdomain="shop").name == "My Shop"
     for bad in ("", "   ", "x" * 201):
         with pytest.raises(ValidationError):
-            CreateStoreRequest(name=bad)
+            CreateStoreRequest(name=bad, subdomain="shop")
 
 
-@pytest.mark.parametrize(
-    ("name", "slug"),
-    [("My Shop", "my-shop"), ("  Köln & Co.  ", "k-ln-co"), ("a__b", "a-b"), ("!!!", "store"), ("Shop 2", "shop-2")],
-)
-def test_slugify(name, slug):
-    assert slugify(name) == slug
+@pytest.mark.parametrize("subdomain", ["Shop", "my_shop", "api", "x" * 31, ""])
+def test_a_new_stores_subdomain_follows_the_one_subdomain_rule(subdomain):
+    # It becomes the namespace store-<subdomain>, the host <subdomain>.<domain> and the server woo-<subdomain>.
+    with pytest.raises(ValidationError, match="subdomain"):
+        CreateStoreRequest(name="Shop", subdomain=subdomain)
+
+
+def test_deleting_a_store_needs_a_reason():
+    assert DeleteStoreRequest(confirm_name="Shop", reason="  closed down  ").reason == "closed down"
+    for bad in ("", "   ", "x" * 501):
+        with pytest.raises(ValidationError):
+            DeleteStoreRequest(confirm_name="Shop", reason=bad)

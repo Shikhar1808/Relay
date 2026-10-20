@@ -63,6 +63,11 @@ spec:
       ports:
         - { port: 8080, protocol: TCP }
         - { port: 9090, protocol: TCP }
+    - from:
+        - podSelector:
+            matchLabels: { app: store-worker }
+      ports:
+        - { port: 9090, protocol: TCP }    # the audit log, which records each server it adds or removes
 ---
 # 5. Postgres: from the three that use it here, and from fulfilment-mcp in any store's
 #    namespace (a namespace marked urumi.io/store=true). That role can open only
@@ -79,7 +84,7 @@ spec:
     - from:
         - podSelector:
             matchExpressions:
-              - { key: app, operator: In, values: [backend, gateway, db-init] }
+              - { key: app, operator: In, values: [backend, gateway, db-init, store-worker] }
         - namespaceSelector:
             matchLabels: { urumi.io/store: "true" }
           podSelector:
@@ -100,7 +105,7 @@ spec:
     - from:
         - podSelector:
             matchExpressions:
-              - { key: app, operator: In, values: [backend, gateway] }
+              - { key: app, operator: In, values: [backend, gateway, store-worker] }
       ports:
         - { port: 6379, protocol: TCP }
 ---

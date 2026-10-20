@@ -1,28 +1,35 @@
-"""Store creation is a STUB for this phase: it writes a DB row and returns a
-fake URL. No Kubernetes/Helm provisioning happens here — see
-IMPLEMENTATION.md for what a real Create Store Service will do instead.
+"""Stores. Creating and deleting one only writes the row: the store worker
+(app/worker.py) installs or removes it in the cluster and moves its status along.
 """
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import common_rate_limit, get_current_user, require_admin
 from app.db.models import Role, Store, StoreMember, StoreStatus, User
 from app.db.session import get_db
 from app.schemas.auth import UserOut
-from app.schemas.stores import AssignMemberRequest, CreateStoreRequest, StoreMemberOut, StoreOut
+from app.schemas.stores import AssignMemberRequest, CreateStoreRequest, DeleteStoreRequest, StoreMemberOut, StoreOut
 from app.services.admin_audit import record
 from app.services.mailer import notice_email, send_email
-from app.services.stores import stores_for_user, unique_slug
+from app.services.stores import stores_for_user
 
 router = APIRouter(
     prefix="/stores",
     tags=["stores"],
     dependencies=[Depends(get_current_user), Depends(common_rate_limit)],
 )
+
+
+async def _get(db: AsyncSession, store_id: uuid.UUID) -> Store:
+    store = await db.get(Store, store_id)
+    if not store:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Store not found")
+    return store
 
 
 @router.post("", response_model=StoreOut, status_code=status.HTTP_201_CREATED)
@@ -32,29 +39,67 @@ async def create_store(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Store:
-    # Retry a few times: unique_slug's check-then-insert has a race window
-    # where two concurrent creates with the same name could pick the same
-    # slug. A collision here is rare and cheap to retry against.
-    for attempt in range(3):
-        slug = await unique_slug(db, body.name)
-        store = Store(
-            name=body.name,
-            slug=slug,
-            status=StoreStatus.ready,  # stub: real provisioning will start at "pending"
-            url=f"https://{slug}.stores.local",
-            created_by=admin.id,
-        )
-        db.add(store)
-        record(db, request, admin, "store.create", slug, name=body.name)
-        try:
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()  # the record goes with it; the next attempt adds its own
-            if attempt == 2:
-                raise HTTPException(status.HTTP_409_CONFLICT, "Could not allocate a unique store slug, try again")
-            continue
-        await db.refresh(store)
-        return store
+    # shortcut: count then insert, so two creates at the same moment can pass the cap by one. Fine for one admin.
+    if await db.scalar(select(func.count()).select_from(Store)) >= settings.max_stores:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"There can be at most {settings.max_stores} stores. Delete one first.")
+    store = Store(
+        name=body.name,
+        slug=body.subdomain,
+        status=StoreStatus.pending,
+        url=f"{settings.store_scheme}://{body.subdomain}.{settings.store_domain}",
+        created_by=admin.id,
+    )
+    db.add(store)
+    record(db, request, admin, "store.create", store.slug, name=body.name)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "A store with this subdomain already exists") from exc
+    await db.refresh(store)
+    return store
+
+
+@router.post("/{store_id}/retry", response_model=StoreOut)
+async def retry_store(
+    store_id: uuid.UUID,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Store:
+    """Hands a failed store back to the worker. Every step it runs is safe to repeat,
+    so a store that got halfway is finished, not made twice."""
+    store = await _get(db, store_id)
+    if store.status != StoreStatus.failed:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only a failed store can be retried")
+    store.status, store.error = StoreStatus.pending, None
+    record(db, request, admin, "store.retry", store.slug)
+    await db.commit()
+    await db.refresh(store)
+    return store
+
+
+@router.delete("/{store_id}", response_model=StoreOut, status_code=status.HTTP_202_ACCEPTED)
+async def delete_store(
+    store_id: uuid.UUID,
+    body: DeleteStoreRequest,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Store:
+    """The worker then removes its MCP server, its namespace (with its volumes and
+    Secrets) and finally the row. A failed delete leaves a failed store to delete again."""
+    store = await _get(db, store_id)
+    if body.confirm_name != store.name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Type the store's name exactly as it is shown to delete it")
+    if store.status not in (StoreStatus.ready, StoreStatus.failed):
+        # The worker is busy with it, and would mark it ready over the delete.
+        raise HTTPException(status.HTTP_409_CONFLICT, "Wait until the store is ready or has failed, then delete it")
+    store.status, store.error = StoreStatus.deleting, None
+    record(db, request, admin, "store.delete", store.slug, name=store.name, reason=body.reason)
+    await db.commit()
+    await db.refresh(store)
+    return store
 
 
 @router.get("", response_model=list[StoreOut])

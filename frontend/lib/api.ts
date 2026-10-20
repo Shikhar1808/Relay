@@ -15,7 +15,9 @@ export type Store = {
   id: string;
   name: string;
   slug: string;
-  status: "pending" | "provisioning" | "ready" | "failed";
+  status: "pending" | "provisioning" | "ready" | "failed" | "deleting";
+  step: string | null; // what the store worker is doing now
+  error: string | null; // why it last failed
   url: string | null;
   created_at: string;
 };

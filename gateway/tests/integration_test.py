@@ -146,7 +146,7 @@ async def main() -> int:
         return user_id, r.json()["raw_key"]
 
     async def store(label: str, user_id: str) -> str:
-        r = await api.post("/stores", json={"name": f"GW {label} {unique}"}, headers=admin)
+        r = await api.post("/stores", json={"name": f"GW {label} {unique}", "subdomain": f"gw-{label.lower()}-{unique}"}, headers=admin)
         assert r.status_code == 201, r.text
         store_id = r.json()["id"]
         r = await api.post(f"/stores/{store_id}/members", json={"user_id": user_id}, headers=admin)
