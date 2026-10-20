@@ -139,6 +139,35 @@ async def deactivate_member(
         )
 
 
+@router.post("/members/{member_id}/reactivate", response_model=MemberCreatedOut)
+async def reactivate_member(
+    member_id: uuid.UUID,
+    background: BackgroundTasks,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> MemberCreatedOut:
+    """Undoes a deactivation: the member gets a new temporary password (the old one stops working)
+    and a new invite link, like a new member. Their stores come back with them. Their API key was never
+    revoked by deactivating, so it works again too: revoke it first if it should not."""
+    member = await db.get(User, member_id)
+    if not member:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not found")
+    if member.is_active:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This member is already active")
+    temp_password = generate_temp_password()
+    member.is_active = True
+    member.password_hash = hash_password(temp_password)
+    record(db, request, admin, "member.reactivate", member.email)
+    await db.commit()
+    await db.refresh(member)
+
+    token = await issue_auth_token(db, member.id, TokenPurpose.invite)
+    background.add_task(send_email, member.email, *invite_email(member.name, token))
+
+    return MemberCreatedOut(user=UserOut.model_validate(member), temporary_password=temp_password)
+
+
 # ---- admin: issue/list/revoke a SPECIFIC member's key -----------------------
 
 

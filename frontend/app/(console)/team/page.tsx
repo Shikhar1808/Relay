@@ -63,7 +63,7 @@ export default function TeamPage() {
         <Notice tone="error">{invite.error}</Notice>
         {created && (
           <Secret
-            label={`${created.user.name} was added and emailed an invite. If the email doesn't arrive, give them this temporary password:`}
+            label={`${created.user.name}'s account is ready and an invite was emailed. If the email doesn't arrive, give them this temporary password:`}
             value={created.temporary_password}
           />
         )}
@@ -95,6 +95,21 @@ export default function TeamPage() {
                     <p className="text-sm break-all text-ink-soft">{person.email}</p>
                   </div>
                 </div>
+                {person.role === "member" && !person.is_active && (
+                  <Button
+                    variant="quiet"
+                    disabled={rowAction.busy}
+                    onClick={() =>
+                      rowAction.run(async () => {
+                        setResentTo(undefined);
+                        setCreated(await api<MemberCreated>(`/team/members/${person.id}/reactivate`, { method: "POST" }));
+                        await reload();
+                      })
+                    }
+                  >
+                    Reactivate
+                  </Button>
+                )}
                 {person.role === "member" && person.is_active && (
                   <div className="flex flex-wrap gap-2">
                     <Button
