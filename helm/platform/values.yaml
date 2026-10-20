@@ -7,13 +7,13 @@ tls:
 
 imagePullPolicy: IfNotPresent
 images:
-  backend: relay-backend:0.2.0
+  backend: relay-backend:0.2.1
   gateway: relay-gateway:0.1.0
   frontend: relay-frontend:0.3.0
   riskMcp: relay-risk-mcp:0.1.0
   postgres: postgres:18-alpine
   redis: redis:7-alpine
-  storeWorker: relay-store-worker:0.1.1
+  storeWorker: relay-store-worker:0.1.2
 
 secretName: urumi-platform
 

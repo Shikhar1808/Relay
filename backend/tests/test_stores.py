@@ -138,6 +138,18 @@ async def test_a_store_is_deleted_only_when_its_name_is_typed_again():
     assert refused.value.status_code == 400 and store.status == StoreStatus.ready and db.added == []
 
 
+async def test_the_first_store_cannot_be_deleted_here(monkeypatch):
+    # The API registers it again on every start when its row is missing (app/services/bootstrap.py),
+    # so deleting it here would bring it back as a ready store whose namespace is gone.
+    store = a_store(StoreStatus.ready)
+    monkeypatch.setattr(settings, "first_store_subdomain", store.slug)
+    db = FakeDb(store)
+    with pytest.raises(HTTPException) as refused:
+        await stores.delete_store(store.id, DeleteStoreRequest(confirm_name="Shop Two", reason="closed down"), REQUEST, ADMIN, db)
+    assert refused.value.status_code == 409 and "helm" in refused.value.detail
+    assert store.status == StoreStatus.ready and db.added == [] and db.commits == 0
+
+
 @pytest.mark.parametrize("status", [StoreStatus.pending, StoreStatus.provisioning, StoreStatus.deleting])
 async def test_a_store_the_worker_is_busy_with_cannot_be_deleted(status):
     # The worker would otherwise finish the install and mark it ready over the delete.

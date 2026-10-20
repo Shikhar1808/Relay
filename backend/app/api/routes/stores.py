@@ -90,6 +90,9 @@ async def delete_store(
     """The worker then removes its MCP server, its namespace (with its volumes and
     Secrets) and finally the row. A failed delete leaves a failed store to delete again."""
     store = await _get(db, store_id)
+    if store.slug == settings.first_store_subdomain:
+        # The API registers it again on every start when its row is missing (app/services/bootstrap.py).
+        raise HTTPException(status.HTTP_409_CONFLICT, "The first store comes with the platform chart: remove it with helm, not here")
     if body.confirm_name != store.name:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Type the store's name exactly as it is shown to delete it")
     if store.status not in (StoreStatus.ready, StoreStatus.failed):

@@ -65,14 +65,14 @@ images (Postgres, Redis, MySQL, WordPress) are downloaded by the cluster itself.
 worker's image is built from the repo root, because it carries the store chart:
 
 ```sh
-docker build -t relay-backend:0.2.0 backend
+docker build -t relay-backend:0.2.1 backend
 docker build -t relay-gateway:0.1.0 gateway
 docker build -t relay-frontend:0.3.0 frontend
 docker build -t relay-woo-mcp:0.1.0 woo-mcp
 docker build -t relay-risk-mcp:0.1.0 risk-mcp
 docker build -t relay-fulfilment-mcp:0.1.0 fulfilment-mcp
-docker build -f backend/Dockerfile.worker -t relay-store-worker:0.1.1 .
-k3d image import -c urumi relay-backend:0.2.0 relay-gateway:0.1.0 relay-frontend:0.3.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.1
+docker build -f backend/Dockerfile.worker -t relay-store-worker:0.1.2 .
+k3d image import -c urumi relay-backend:0.2.1 relay-gateway:0.1.0 relay-frontend:0.3.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.2
 ```
 
 **3. The secrets.** No secret is in the charts or in git. This writes two git-ignored files
@@ -257,7 +257,9 @@ then base64-decoded.
 
 **Delete store** asks for the store's name again and a reason (kept in the audit log). The
 store's tools leave the gateway first, then its namespace is deleted, which takes its pods,
-volumes and Secrets with it. At most `maxStores` stores exist (5). Stores made here have no
+volumes and Secrets with it. The first store (Demo Store) is refused here: it comes with the
+platform chart, and the API would register it again on its next start. At most `maxStores`
+stores exist (5). Stores made here have no
 fulfilment server: one fulfilment database serves one store, so the demo store keeps it.
 
 ### The audit log
@@ -312,7 +314,7 @@ What the server needs: Ubuntu 24.04 with a public IPv4 address, at least 4 GB of
 5. **The images:** build them as in local step 2, then copy them to the server:
 
    ```sh
-   docker save -o relay-images.tar relay-backend:0.2.0 relay-gateway:0.1.0 relay-frontend:0.3.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.1
+   docker save -o relay-images.tar relay-backend:0.2.1 relay-gateway:0.1.0 relay-frontend:0.3.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.2
    scp relay-images.tar <user>@<server>:
    ssh <user>@<server> 'sudo k3s ctr images import relay-images.tar && rm relay-images.tar'
    ```
@@ -367,6 +369,24 @@ What makes this safe:
   migration needs that migration undone first (`alembic downgrade`).
 - **After a `kubectl edit` or `patch`** of an object the chart owns, Helm 4 refuses the next
   upgrade until `--force-conflicts` is added.
+
+**Stores made on the dashboard** are not upgraded by anything automatically. Two things to do
+whenever `helm/store` changes:
+
+1. **Rebuild the store worker's image** with a new tag (in `images.storeWorker`), and upgrade the
+   platform: the worker installs the copy of the chart inside its image, so until then new
+   stores still get the old one.
+2. **Upgrade each store made on the dashboard** with the values it was installed with:
+
+   ```sh
+   helm upgrade store-<subdomain> ./helm/store -n store-<subdomain> --reset-then-reuse-values --set-file scripts.wpInit=woo-mcp/deploy/wp-init.sh --wait
+   ```
+
+   `--reset-then-reuse-values` keeps the store's own values (its name, subdomain, and
+   fulfilment off) and takes the new chart's defaults for the rest. Never upgrade one with the
+   demo store's command (`-f helm/store/values-local.yaml` alone): the chart's defaults are the
+   demo store's, so the store would be renamed "Demo Store", take the demo store's address, and
+   get a fulfilment server whose keys its Secret does not have.
 
 ## Development without Kubernetes
 

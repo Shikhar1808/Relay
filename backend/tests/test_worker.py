@@ -264,9 +264,19 @@ async def test_a_ready_store_gets_its_server_registered_for_its_members_only(mon
 
 
 async def test_a_server_that_is_already_registered_is_left_as_it_is(monkeypatch, log, registry):
-    db = FakeDb(log, existing=uuid.uuid4())
+    store = a_store(StoreStatus.provisioning)
+    db = FakeDb(log, existing=SimpleNamespace(store_id=store.id))  # an earlier run registered it
     monkeypatch.setattr(worker, "AsyncSessionLocal", lambda: db)
-    await worker.register_server(a_store(StoreStatus.provisioning), "t" * 48)
+    await worker.register_server(store, "t" * 48)
+    assert db.added == [] and log == []
+
+
+@pytest.mark.parametrize("owner", [None, uuid.uuid4()])  # shared by every store, or another store's
+async def test_a_server_of_that_name_that_is_not_this_stores_stops_the_store_with_a_reason(monkeypatch, log, registry, owner):
+    db = FakeDb(log, existing=SimpleNamespace(store_id=owner))  # added by hand on the Servers page
+    monkeypatch.setattr(worker, "AsyncSessionLocal", lambda: db)
+    with pytest.raises(RuntimeError, match="woo-shop-two already exists"):
+        await worker.register_server(a_store(StoreStatus.provisioning), "t" * 48)
     assert db.added == [] and log == []
 
 

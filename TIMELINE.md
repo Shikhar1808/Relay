@@ -254,6 +254,7 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 - **A server already called `woo-<subdomain>`** (added by hand) makes the worker skip registration.
 - **ARM servers:** the worker image downloads amd64 `helm` and `kubectl`.
 - **Docker Compose has no worker,** so stores made there stay pending.
+- **Upgrading stores made on the dashboard** is by hand, one `helm upgrade --reset-then-reuse-values` per store (README, "Upgrade and roll back"); nothing rolls a chart change out to them, and the worker image carries its own copy of the chart.
 
 ### Tests and housekeeping
 

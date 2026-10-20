@@ -197,7 +197,8 @@ page (which reloads every 3 seconds while a store is busy) shows exactly where i
 Because every step is safe to repeat, Retry, a restarted worker and a second create of the same
 release are all the same code path: they finish the store, they never make a second one.
 
-**Deleting** (only a ready or failed store; the name typed again and a reason): remove the
+**Deleting** (only a ready or failed store, never the first one, which the API registers again
+on every start; the name typed again and a reason): remove the
 store's servers (audited, announced), so its tools leave every list first; delete the
 namespace, which holds everything the chart made, the Helm release record included, and takes
 each volume with its claim; then delete the row (members and servers cascade).

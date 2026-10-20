@@ -88,8 +88,11 @@ async def register_server(store: Store, token: str) -> None:
     the way an admin's own add is made: recorded in the gateway's audit log, then committed, then announced."""
     slug = f"woo-{store.slug}"
     async with AsyncSessionLocal() as db:
-        if await db.scalar(select(UpstreamServer.id).where(UpstreamServer.slug == slug)) is not None:
-            return  # registered by an earlier run, or by hand: left as it is
+        existing = await db.scalar(select(UpstreamServer).where(UpstreamServer.slug == slug))
+        if existing is not None:
+            if existing.store_id == store.id:
+                return  # registered by an earlier run
+            raise RuntimeError(f"A server named {slug} already exists and is not this store's. Remove it on the Servers page, then press Retry.")
         db.add(
             UpstreamServer(
                 name=store.name,
