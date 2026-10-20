@@ -16,7 +16,9 @@ A FastAPI + PostgreSQL + Redis backend covering:
 - Gateway API key lifecycle: admin can issue/revoke any member's key; a
   member can self-service their own (one active key per user, enforced in
   the DB, not just the route)
-- Store creation — **stub only**, returns a fake URL (see "What's a stub" below)
+- Stores created, retried and deleted from the dashboard: the routes only write the
+  row; the store worker (`app/worker.py`, its own pod) installs or removes the store
+  in the cluster (see `docs/system-design.md`, "Stores from the dashboard")
 - Assigning members to one or more stores, with chat and the gateway
   token-resolve scoped to those stores
 - A chat agent (LangGraph) that answers by calling tools through the MCP
@@ -40,10 +42,8 @@ A FastAPI + PostgreSQL + Redis backend covering:
   Nothing is registered unless `WOO_MCP_URL` and `WOO_MCP_TOKEN` are set. The
   server itself is in `woo-mcp/`
 
-Not built yet: real
-Kubernetes/Helm store provisioning, LiteLLM integration. The web console
+Not built yet: an LLM gateway in front of the chat model. The web console
 lives in `frontend/` (Next.js) and has its own README.
-Those are later phases — see the project plan doc.
 
 ## RBAC: admin vs member
 
@@ -232,6 +232,7 @@ gateway) turns either one into a user identity.
 backend/
   app/
     main.py              App wiring: lifespan, CORS, routers, /health
+    worker.py            The store worker (`python -m app.worker`): kubectl and helm for stores made on the dashboard
     core/                Cross-cutting plumbing, no business rules
       config.py            Settings from env vars (pydantic-settings)
       security.py          Password hashing (bcrypt directly), JWT, key/token generation
@@ -257,8 +258,8 @@ backend/
       bootstrap.py         Single-admin creation, shared by startup + signup route
       mailer.py            SMTP sender + plain-text email templates
       auth_tokens.py       Issue/redeem single-use invite and reset tokens
-      stores.py            Store slug generation; stores_for_user (the scoping rule)
-      gateway_audit.py     Writes to and reads from the gateway's audit log (its private port)
+      stores.py            check_subdomain (the one subdomain rule); stores_for_user (the scoping rule)
+      gateway_audit.py     Writes to and reads from the gateway's audit log (its private port); record_and_commit
       admin_audit.py       Adds an admin_events row to the caller's transaction
       conversations.py     The open chat and its token, ending it, earlier chats, deleting old ones
     agent/               The chat agent (LangGraph); see "The chat agent"
@@ -270,7 +271,7 @@ backend/
       routes/
         auth.py            Login, admin signup, /auth/me, change/forgot/set password
         team.py            Member CRUD + admin and self-service API key routes
-        stores.py          Store create (stub) + member assignment
+        stores.py          Store create, retry and delete (rows only; the worker does the rest) + member assignment
         chat.py            The chat: message, confirm, the open chat, end, earlier chats
         upstreams.py       Upstream MCP server registry (admin only); tells the gateway on change
         audit.py           GET /audit-log, /audit-log/platform, /audit-log/verify: the audit log, for the dashboard (admin only)
@@ -279,10 +280,12 @@ backend/
     smoke_test.py                       End-to-end check against a live stack
   tests/                                Unit tests: `uv run pytest` (settings, passwords and tokens,
                                         encryption, input rules, the rate limiter, the audit log client,
-                                        recording admin events)
+                                        recording admin events, the store routes, the store worker
+                                        against a fake cluster)
   migrations/                           Alembic: env.py + one file per schema change
   alembic.ini
   Dockerfile                            Runs `alembic upgrade head`, then uvicorn
+  Dockerfile.worker                     The store worker's image: this code plus helm, kubectl and helm/store (built from the repo root)
   pyproject.toml / uv.lock                Dependencies, managed with uv
 ```
 
@@ -309,7 +312,9 @@ backend/
 | POST | `/team/me/api-keys` | JWT | user, 60/min | Self-issue own key; 409 if already have an active one |
 | GET | `/team/me/api-keys` | JWT | user, 60/min | List own keys |
 | POST | `/team/me/api-keys/{key_id}/revoke` | JWT | user, 60/min | Revoke own key; 404 if the id belongs to someone else |
-| POST | `/stores` | JWT (admin) | user, 60/min | **Stub.** Creates a DB row, returns a fake URL |
+| POST | `/stores` | JWT (admin) | user, 60/min | `{name, subdomain}`: a `pending` row at `<scheme>://<subdomain>.<domain>`, for the store worker. 409 for a subdomain in use or at `MAX_STORES` |
+| POST | `/stores/{id}/retry` | JWT (admin) | user, 60/min | Sends a `failed` store back to `pending`; 409 for any other status |
+| DELETE | `/stores/{id}` | JWT (admin) | user, 60/min | `{confirm_name, reason}`: marks a ready or failed store `deleting` for the worker (202). 400 if the name does not match, 409 while the worker is busy with it |
 | GET | `/stores` | JWT | user, 60/min | Admin sees all stores; member sees only their stores |
 | POST | `/stores/{id}/members` | JWT (admin) | user, 60/min | Assigns a member to a store; 409 if they already belong to one, 400 for the admin |
 | DELETE | `/stores/{id}/members/{user_id}` | JWT (admin) | user, 60/min | Removes a member from a store, effective immediately |
@@ -459,13 +464,10 @@ START -> call_model -> check_calls -> run_tools --------+
 
 ## What's a stub (and what replaces it later)
 
-- **Store creation** (`POST /stores`) writes a DB row and returns `https://{slug}.stores.local`
-  immediately with `status=ready`. No Kubernetes namespace, no Helm release,
-  no WordPress/WooCommerce, no MCP server registration happens. Only the first
-  store, the one `docker-compose.yml` runs and startup registers, is real. The real
-  version is a separate Create Store Service that drives `helm install` per
-  store and updates this same `stores` table through a
-  `pending → provisioning → ready/failed` state machine.
+- **Stores in Docker Compose stay `pending`.** The store worker needs a cluster, so
+  Compose does not run it; it runs on Kubernetes (`helm/platform`). The end-to-end tests
+  only check the rows, and Compose lifts the store cap (`MAX_STORES: 1000`) because they
+  cannot delete what they made.
 - **The chat reaches one model provider directly** (Groq by default; the
   address, key and model are the `LLM_*` settings). There is no fallback
   provider and no LLM gateway in front yet; putting one there is a change of

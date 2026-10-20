@@ -9,15 +9,16 @@ Two Helm charts, two kinds of namespace.
 
 | Namespace | Chart | Runs |
 |---|---|---|
-| `urumi` | `helm/platform` | dashboard (Next.js), platform API (FastAPI, with the chat agent), MCP gateway, risk-mcp, Postgres, Redis, the `db-init` Job |
-| `store-<subdomain>` (here `store-demo`) | `helm/store` | WordPress, MySQL, the `wp-init` Job, woo-mcp, fulfilment-mcp (two copies) |
+| `urumi` | `helm/platform` | dashboard (Next.js), platform API (FastAPI, with the chat agent), MCP gateway, risk-mcp, the store worker, Postgres, Redis, the `db-init` Job |
+| `store-<subdomain>` (`store-demo`, and one per store made on the dashboard) | `helm/store` | WordPress, MySQL, the `wp-init` Job, woo-mcp, and for the demo store fulfilment-mcp (two copies) |
 
-A second store is the store chart installed again into `store-<its subdomain>`, with its own
-Secret, volumes and Ingress host.
+The first store is installed by hand. Every later one is made from the dashboard: the store
+worker installs the same chart into `store-<its subdomain>`, with its own Secret, volumes,
+Ingress host and limits ([below](#stores-from-the-dashboard)).
 
-**Public:** four names, all through Traefik, the Ingress controller k3s ships with: `app.`
-(dashboard), `api.` (platform API), `mcp.` (the gateway's `/mcp`) and the store's own name
-(storefront and wp-admin). Nothing else has an Ingress rule.
+**Public:** three names, all through Traefik, the Ingress controller k3s ships with: `app.`
+(dashboard), `api.` (platform API) and `mcp.` (the gateway's `/mcp`), plus each store's own
+name (storefront and wp-admin). Nothing else has an Ingress rule.
 
 **Internal only:** everything else, held there in three ways at once:
 
@@ -25,9 +26,9 @@ Secret, volumes and Ingress host.
    (9090: health, and the audit log for the API) have none.
 2. NetworkPolicies. Each namespace refuses every incoming connection by default, and each
    allowed path is opened on its own: woo-mcp and fulfilment-mcp accept only the gateway's
-   pods, MySQL only WordPress and `wp-init`, Postgres only the API, the gateway, `db-init`, and
-   fulfilment-mcp from a namespace labelled as a store's. `helm test store-demo` checks the
-   first of these from a pod that is not the gateway.
+   pods, MySQL only WordPress and `wp-init`, Postgres only the API, the gateway, `db-init`, the
+   store worker, and fulfilment-mcp from a namespace labelled as a store's. `helm test
+   store-<subdomain>` checks the first of these from a pod that is not the gateway.
 3. Their own checks. Every MCP server wants a bearer token and answers only to its own host
    name; the API's `/internal` routes want a service token, and the Ingress refuses that path
    for everyone (Traefik answers 403).
@@ -88,12 +89,19 @@ Each with its reason and its cost.
   keep nothing and two copies run side by side.
 - **Two charts, not one.** The platform is installed once; the store chart once per store.
   The setup scripts (`db-init.sh`, `wp-init.sh`) are passed in with `--set-file`, so Compose
-  and Kubernetes run the same files.
+  and Kubernetes run the same files (the store worker's image carries both the chart and
+  `wp-init.sh`).
 - **Plain Jobs per revision, not Helm hooks.** `db-init-r<revision>` and `wp-init-r<revision>`
   run on every install and upgrade and are safe to repeat. A hook would wait for every pod to
   be ready first, and the gateway cannot be ready before `db-init` has made its role.
-- **Secrets are made outside the charts** with `kubectl`, from git-ignored files. The charts
-  only name them, so no secret is in a values file, in git or in Helm's release record.
+- **Secrets are made outside the charts** with `kubectl`: from git-ignored files for the
+  platform and the first store, by the store worker for later stores. The charts only name
+  them, so no secret is in a values file, in git or in Helm's release record.
+- **Stores are made by a worker, not by the API.** The API only writes a store's row; a
+  separate pod runs `kubectl` and `helm`. So the public API never holds Kubernetes rights, and
+  its image has no cluster tools.
+  *Cost:* one more Deployment and image, and the page learns of progress by reloading, not
+  from a stream.
 - **Local names under nip.io.** No hosts file, and the dashboard and the API share one site,
   which the `SameSite=Strict` sign-in cookie needs.
 
@@ -153,6 +161,62 @@ next request: the API's change message makes the gateway re-read at once.
 | Postgres, briefly | The gateway keeps its last good snapshot and tries again |
 | A pod | Its Deployment or StatefulSet starts a new one. fulfilment-mcp runs two copies, so one can die without a failed call |
 | The chat model | The chat answers "the chat model is not available right now", never a 500 |
+| The store worker | Stores already made keep working; new ones wait in `pending` until it is back, then it finishes them |
+
+## Stores from the dashboard
+
+A store is a row in the `stores` table, and the row is the truth. The API writes it; the
+store worker (`backend/app/worker.py`, one replica) does the cluster work and moves it along:
+
+```
+POST /stores ──► pending ──► provisioning ──► ready ──DELETE──► deleting ──► (row removed)
+                    ▲              │                               │
+                    └── Retry ── failed ◄──────────────────────────┘
+```
+
+Every 3 seconds the worker reads the rows in `pending`, `provisioning` or `deleting`, and
+runs each store in its own task, so several are made at once and one store never has two
+tasks. It saves the step it is on before each one, and any error into the row, so the Stores
+page (which reloads every 3 seconds while a store is busy) shows exactly where it is.
+
+**Creating**, each step safe to repeat:
+
+1. `kubectl apply` the namespace `store-<subdomain>`, labelled as a store's (the platform's
+   NetworkPolicies key on that label), and a RoleBinding in it (below).
+2. Make the store's Secret if it does not exist: six random values, sent to `kubectl` on
+   stdin, never as arguments. An existing Secret is never replaced, because MySQL keeps the
+   password it was first given on its volume.
+3. `helm upgrade --install` the store chart, with the subdomain and name as a values document
+   on stdin, `--wait --wait-for-jobs --timeout 10m --rollback-on-failure`. A release left
+   "pending" by a worker killed in the middle is uninstalled or rolled back first, since Helm
+   would refuse any change to it.
+4. Register `woo-<subdomain>` for that store the way an admin's change is made: recorded in the
+   gateway's audit log, committed, announced to the gateway. Skipped if it already exists.
+5. Mark the store ready.
+
+Because every step is safe to repeat, Retry, a restarted worker and a second create of the same
+release are all the same code path: they finish the store, they never make a second one.
+
+**Deleting** (only a ready or failed store; the name typed again and a reason): remove the
+store's servers (audited, announced), so its tools leave every list first; delete the
+namespace, which holds everything the chart made, the Helm release record included, and takes
+each volume with its claim; then delete the row (members and servers cascade).
+
+**What the worker may do in the cluster.** RBAC alone cannot say "only namespaces named
+`store-*`", so it takes three pieces:
+
+- a ClusterRole bound cluster-wide that only creates and removes namespaces and RoleBindings,
+  and may `bind` exactly one role, `relay-store-installer`;
+- `relay-store-installer`, which holds what installing the store chart needs and is bound by
+  the worker inside each namespace it makes, so those rights exist only there;
+- a ValidatingAdmissionPolicy that makes the API server refuse the worker's account any
+  namespace or RoleBinding change outside `store-*`. Without it, the worker could bind the
+  installer role in `kube-system` and take over the cluster from there.
+
+**Per-store limits:** each store namespace has a ResourceQuota (CPU and memory requests,
+memory limits, storage, claims, pods) and a LimitRange (defaults for a container that names
+none, and a per-container ceiling). The demo store uses about 350m CPU, 1Gi of memory requests,
+2.3Gi of limits and 7Gi of disk, under 1 CPU, 2Gi, 4Gi and 10Gi.
 
 ## Kubernetes
 
@@ -167,12 +231,13 @@ next request: the API's change message makes the gateway re-read at once.
 | MySQL | StatefulSet | `mysqladmin ping`, with a startup check of up to 5 minutes | 100m, 512Mi / 1Gi | 5Gi |
 | WordPress | Deployment, `Recreate` | `/wp-login.php` | 100m, 256Mi / 512Mi | 2Gi, kept on uninstall |
 | `db-init`, `wp-init` | Job per revision | | 50m, 32Mi / 128Mi; 50m, 128Mi / 512Mi | |
+| Store worker | Deployment, `Recreate`, one copy | live while it keeps touching a heartbeat file (it serves nothing, so no readiness check) | 50m, 128Mi / 1Gi | |
 
-Every long-running workload has a readiness and a liveness check. There are memory limits and no
-CPU limits, so a busy pod is slowed rather than killed. Our six images run as user 10001 (the
-dashboard as `node`, 1000), with a read-only root filesystem where the image allows it, all
-capabilities dropped, the default seccomp profile, and no Kubernetes API token mounted, since
-nothing here talks to the Kubernetes API.
+Every long-running workload has a readiness or a liveness check, most both. There are memory
+limits and no CPU limits, so a busy pod is slowed rather than killed. Our seven images run as
+user 10001 (the dashboard as `node`, 1000), with a read-only root filesystem where the image
+allows it, all capabilities dropped and the default seccomp profile. Only the store worker has
+a Kubernetes API token mounted; nothing else talks to the Kubernetes API.
 
 **Start order without `depends_on`.** Every pod starts at once and retries. The API's
 migrations fail until Postgres answers, so it restarts once or twice. `db-init` fails until those
@@ -195,14 +260,17 @@ change.
 | Sign-in cookie | not `Secure` (plain http) | `Secure`, decided by the dashboard's address being https |
 | Email | written to the API's log, or Resend's test sender | Resend, from an address on the verified domain (`smtpFrom`) |
 | Kubernetes API | local | reached through an SSH tunnel; port 6443 stays closed |
+| New stores | installed with `helm/store/values-local.yaml` | installed with `values-prod.yaml` (https, the domain), named by the platform's `storeWorker.valuesFile` |
 
 ## Known limits
 
 - **One fulfilment database for every store.** Its table is keyed by the store's own order
-  number, so a second store's fulfilment server would share it. One database per store is
-  needed before more stores get fulfilment (marked in `fulfilment-mcp/README.md`).
-- **Stores are installed by hand.** The dashboard keeps store records, but installing the store
-  chart from the dashboard (the multi-store bonus) is not built.
+  number, so a second store's fulfilment server would share it. So stores made on the
+  dashboard get no fulfilment server; one database per store is needed first (marked in
+  `fulfilment-mcp/README.md`).
+- **One store worker.** Two copies would pick up the same store. Claiming rows with
+  `FOR UPDATE SKIP LOCKED` would allow more.
+- **Docker Compose has no store worker**, so a store created there stays pending.
 - **One copy of Postgres and of MySQL**, with no backups.
 - **The chat on Groq's free tier** can run out of tokens on long questions (above).
 - **No OAuth for members, no per-role tool permissions, no guard on the address an admin

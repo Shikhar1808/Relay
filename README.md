@@ -12,6 +12,7 @@ dashboard. Every tool call is in an audit log, under the person who made it.
 | Gateway and dashboard | The gateway (one `/mcp` endpoint for every server), the platform API (FastAPI) and the dashboard (Next.js) | `gateway/`, `backend/`, `frontend/` |
 | Chat agent | A LangGraph tool loop in the platform API, calling tools through the gateway as the signed-in user | `backend/app/agent/` |
 | Servers 2 and 3 | Risk check (scores orders) and Fulfilment (ships them), our own | `risk-mcp/`, `fulfilment-mcp/` |
+| Store worker | Creates and deletes stores from the dashboard: a namespace, the store chart, and the registration of its MCP server | `backend/app/worker.py`, `helm/platform/templates/store-worker*.yaml` |
 
 The two required notes:
 
@@ -38,6 +39,8 @@ browser, MCP client ──► Traefik (Ingress): the only way in from outside
 
 gateway ──► platform API /internal/auth/resolve: whose key is this, and which stores?
 platform API, gateway ──► Postgres and Redis                               namespace urumi
+store worker ──► Kubernetes API: a store made on the dashboard gets        namespace urumi
+                 store-<subdomain>, the store chart in it, and its server woo-<subdomain>
 ```
 
 ## Local setup (k3d)
@@ -57,17 +60,19 @@ k3d cluster create urumi -p "80:80@loadbalancer" -p "443:443@loadbalancer"
 kubectl get nodes
 ```
 
-**2. The six images.** The cluster runs images, so build ours and copy them in. The stock
-images (Postgres, Redis, MySQL, WordPress) are downloaded by the cluster itself.
+**2. The seven images.** The cluster runs images, so build ours and copy them in. The stock
+images (Postgres, Redis, MySQL, WordPress) are downloaded by the cluster itself. The store
+worker's image is built from the repo root, because it carries the store chart:
 
 ```sh
-docker build -t relay-backend:0.1.0 backend
+docker build -t relay-backend:0.2.0 backend
 docker build -t relay-gateway:0.1.0 gateway
-docker build -t relay-frontend:0.2.0 frontend
+docker build -t relay-frontend:0.3.0 frontend
 docker build -t relay-woo-mcp:0.1.0 woo-mcp
 docker build -t relay-risk-mcp:0.1.0 risk-mcp
 docker build -t relay-fulfilment-mcp:0.1.0 fulfilment-mcp
-k3d image import -c urumi relay-backend:0.1.0 relay-gateway:0.1.0 relay-frontend:0.2.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0
+docker build -f backend/Dockerfile.worker -t relay-store-worker:0.1.1 .
+k3d image import -c urumi relay-backend:0.2.0 relay-gateway:0.1.0 relay-frontend:0.3.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.1
 ```
 
 **3. The secrets.** No secret is in the charts or in git. This writes two git-ignored files
@@ -85,7 +90,7 @@ kubectl -n store-demo create secret generic store-demo --from-env-file=.env.k8s-
 
 The label marks `store-demo` as a store's namespace: only then may its fulfilment server
 reach the platform's Postgres. A store's namespace is always `store-<subdomain>`, and its
-Secret has the same name.
+Secret has the same name. Stores made later from the dashboard get both from the store worker.
 
 **4. The two charts.** `helm/platform` is the dashboard, API, gateway, risk server and
 databases; `helm/store` is one store with its two MCP servers. The setup scripts are passed
@@ -130,6 +135,9 @@ server shows **Connected** with its tools within a few seconds.
 
 ```sh
 helm test store-demo -n store-demo     # a pod that is not the gateway must be refused by the store's MCP servers
+# The store worker may touch store-* namespaces only: the first is refused, the second allowed (and not saved)
+kubectl create namespace evil --as=system:serviceaccount:urumi:relay-store-worker
+kubectl create namespace store-guardtest --dry-run=server --as=system:serviceaccount:urumi:relay-store-worker
 ```
 
 On Windows: run the commands in PowerShell, and set `$env:GROQ_API_KEY="<your key>"` before
@@ -223,6 +231,35 @@ it shows **Unreachable**, a call to it fails at once with a clear error, and the
 keep working. `--replicas=1` brings it back. (Deleting the pod alone is not enough to see it:
 Kubernetes starts a new one within seconds.)
 
+### Create and delete stores
+
+As the admin, on **Stores**: a name and a subdomain (lowercase letters, digits and hyphens; it
+cannot change later), then **Create store**. The store shows **pending**, then
+**provisioning** with what is happening now, then **ready**, in two to five minutes; several
+can be made at once. Its storefront is at `http://<subdomain>.127.0.0.1.nip.io`, and its
+WooCommerce server is registered as `woo-<subdomain>` by itself: it shows on **Servers**, the
+admin can use it at once, and a member once added to the store with **Manage members**. An
+already connected MCP client sees the new tools after it reconnects.
+
+Behind the page, the store worker makes the namespace `store-<subdomain>` with its own Secret
+of new random values, installs `helm/store` in it, and registers the server. If a step fails,
+the store shows **failed** with the reason, and **Retry** runs it again: every step is safe to
+repeat, so nothing is made twice. The worker logs only failures:
+
+```sh
+kubectl get pods -n store-<subdomain> -w
+kubectl logs -n urumi deploy/store-worker
+```
+
+A new store's wp-admin user is `admin`; its password is in its Secret:
+`kubectl get secret store-<subdomain> -n store-<subdomain> -o jsonpath='{.data.WP_ADMIN_PASSWORD}'`,
+then base64-decoded.
+
+**Delete store** asks for the store's name again and a reason (kept in the audit log). The
+store's tools leave the gateway first, then its namespace is deleted, which takes its pods,
+volumes and Secrets with it. At most `maxStores` stores exist (5). Stores made here have no
+fulfilment server: one fulfilment database serves one store, so the demo store keeps it.
+
 ### The audit log
 
 **Audit** (admin only) has every tool call with who made it, the server and tool, when, how
@@ -275,7 +312,7 @@ What the server needs: Ubuntu 24.04 with a public IPv4 address, at least 4 GB of
 5. **The images:** build them as in local step 2, then copy them to the server:
 
    ```sh
-   docker save -o relay-images.tar relay-backend:0.1.0 relay-gateway:0.1.0 relay-frontend:0.2.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0
+   docker save -o relay-images.tar relay-backend:0.2.0 relay-gateway:0.1.0 relay-frontend:0.3.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.1
    scp relay-images.tar <user>@<server>:
    ssh <user>@<server> 'sudo k3s ctr images import relay-images.tar && rm relay-images.tar'
    ```
@@ -336,9 +373,10 @@ What makes this safe:
 `docker-compose.yml` runs the same services for development: copy `.env.example` to `.env`,
 fill it in (each value says how to generate it), then `docker compose up -d --build`. The
 dashboard is on http://localhost:3000, the API on :8000, the gateway on
-http://localhost:8080/mcp and the store on :8081.
+http://localhost:8080/mcp and the store on :8081. Compose runs no store worker: a store
+created there stays **pending**.
 
-Tests: `./run_tests.sh` runs the unit tests of all five services (456, no running stack
+Tests: `./run_tests.sh` runs the unit tests of all five services (490, no running stack
 needed); `./run_tests.sh all` also starts the stack and runs the end-to-end tests, and
 fulfilment-mcp's tests against the real Postgres.
 
@@ -346,12 +384,12 @@ fulfilment-mcp's tests against the real Postgres.
 
 | Item | State | Where |
 |---|---|---|
-| Security hardening | Default-deny NetworkPolicies in both namespaces, each path opened on purpose, proven by `helm test`; containers run as non-root with no unused Kubernetes API token; server credentials encrypted at rest (AES-256-GCM); keys and tokens stored hashed; the API's internal route refused at the Ingress. No guard yet on the address an admin types (see the threat model) | `helm/*/templates/networkpolicies.yaml`, `helm/store/templates/tests/`, `backend/app/core/crypto.py` |
+| Security hardening | Default-deny NetworkPolicies in both namespaces, each path opened on purpose, proven by `helm test`; containers run as non-root with no unused Kubernetes API token; server credentials encrypted at rest (AES-256-GCM); keys and tokens stored hashed; the API's internal route refused at the Ingress. The store worker is the only pod with Kubernetes rights: it may make namespaces and bind one installer role inside them, and an admission policy makes the API server refuse it anything outside `store-*`. No guard yet on the address an admin types (see the threat model) | `helm/*/templates/networkpolicies.yaml`, `helm/store/templates/tests/`, `helm/platform/templates/store-worker*.yaml`, `backend/app/core/crypto.py` |
 | Rate limits per user and per key | The gateway allows each user 120 tool calls a minute (token bucket); the API limits sign-ins by address and requests by user | `gateway/app/limits.py`, `backend/app/core/rate_limit.py` |
 | Upgrades and rollback | Documented above; Jobs per revision; volumes outlive releases | this README |
 | Production-like VPS | `values-prod.yaml` for both charts; https checked on k3d; the VPS install is pending | `helm/*/values-prod.yaml` |
 | Observability, in part | The Servers page shows each server's status and tools; the audit log says why a call failed ("the server could not be reached", timeouts) and records each server going down and coming back. No metrics endpoint | `gateway/app/catalog.py`, `gateway/app/audit.py` |
-| Multi-store, in part | A store is one install of `helm/store` in its own namespace with its own Secret, volumes and Ingress host, and its tools are named after it (`woo-<subdomain>__…`). The dashboard lists and creates store records; installing the chart from the dashboard is not built | `helm/store`, `backend/app/api/routes/stores.py` |
+| Multi-store | Stores are created and deleted from the dashboard (above), several at once, each with status, step, error, address and created time. A store is one install of `helm/store` in its own namespace, with its own Secret, volumes, Ingress host, ResourceQuota, LimitRange and NetworkPolicies, and its own MCP server registered as `woo-<subdomain>`, so tool names say which store they act on. The worker's steps are safe to repeat, so Retry and a restarted worker finish a store instead of making a second one. Deleting removes the server, then the namespace (pods, volumes, Secrets), then the record | `backend/app/worker.py`, `backend/app/api/routes/stores.py`, `helm/store`, `helm/platform/templates/store-worker*.yaml` |
 | Not from the brief | A tamper-evident audit log (each row chained with an HMAC; append-only by trigger); the chat asks before any change; each member sees only the servers of their stores | `gateway/README.md`, `backend/app/agent/` |
 
 Not attempted: OAuth on the gateway, per-role tool permissions, tool search for many tools,

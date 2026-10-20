@@ -3,8 +3,8 @@
 Progress against the implementation guide and the assignment brief (both kept outside the repo).
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 19 Oct 2026
-- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. The Servers page is built. On k3d (18 Oct) the two Helm charts (`helm/platform`, `helm/store`) run everything, and all three servers (woo-demo, risk, fulfilment) show Connected. NetworkPolicies are in and tested: only the gateway reaches the store MCP servers, and only fulfilment-mcp from a store namespace reaches Postgres. `values-prod.yaml` is written for the VPS. Next: the VPS (k3s, DNS, cert-manager)
+- **Last updated:** 20 Oct 2026
+- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. The Servers page is built. On k3d (18 Oct) the two Helm charts (`helm/platform`, `helm/store`) run everything, and all three servers (woo-demo, risk, fulfilment) show Connected. NetworkPolicies are in and tested: only the gateway reaches the store MCP servers, and only fulfilment-mcp from a store namespace reaches Postgres. `values-prod.yaml` is written for the VPS. Stores are now made from the dashboard (20 Oct, branch `feat/multi-store`): the store worker installs `helm/store` per store and registers its server; `second` was made on k3d and is ready, with `woo-second` Connected. Isolation between the two stores checked from inside the pods. Next: the rest of the bonus checks (two stores at once, recovery, delete), then the VPS (k3s, DNS, cert-manager)
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -105,14 +105,15 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 
 ## Oct 22–23: Bonus, multi-store provisioning
 
-- [x] Stores page and endpoints: create and list (stub, no real provisioning)
-- [ ] Delete a store
-- [ ] Create Store Service: Helm install per store in its own namespace
-- [ ] Provisioning state machine with retry and recovery
-- [ ] Creating or registering a store that already exists reconnects to it (`helm upgrade --install`): no second store, its pods started again if they are down, its volumes kept; only an explicit delete removes them
-- [ ] Automatic MCP registration per store
-- [ ] NetworkPolicies, ResourceQuota, LimitRange per store namespace (NetworkPolicies done 18 Oct, in `helm/store`; quota and limit range not yet)
-- [ ] Clean teardown
+- [x] Stores page and endpoints: create, list, retry, delete; status, step, error, address and created time, reloaded every 3 s while a store is busy (20 Oct)
+- [ ] Delete a store (built 20 Oct: name typed again and a reason, recorded; live check pending)
+- [x] Create Store Service: the store worker (`backend/app/worker.py`, its own pod and image) installs `helm/store` per store in `store-<subdomain>` (20 Oct: `second` made on k3d, storefront up)
+- [ ] Provisioning state machine with retry and recovery (built 20 Oct: pending → provisioning → ready/failed, deleting. Retry checked live: `second` failed on a Helm 4 flag, then reached ready after Retry, reusing its namespace and Secret. A restarted worker resuming a store is unit-tested; live check pending)
+- [ ] Creating or registering a store that already exists reconnects to it (`helm upgrade --install`): no second store, its pods started again if they are down, its volumes kept; only an explicit delete removes them (built 20 Oct: a used subdomain gets 409, every worker step is safe to repeat; pods started again not checked live)
+- [x] Automatic MCP registration per store: `woo-<subdomain>`, recorded in the gateway's audit log (20 Oct: `woo-second` Connected with its 7 tools)
+- [x] NetworkPolicies, ResourceQuota, LimitRange per store namespace (NetworkPolicies 18 Oct; quota and limit range 20 Oct, store-demo using 350m CPU, 1056Mi, 2304Mi of limits and 7Gi under 1, 2Gi, 4Gi and 10Gi)
+- [ ] Clean teardown (built 20 Oct: the store's servers, then its namespace with volumes and Secrets, then the row; live check pending)
+- [x] Isolation between stores (20 Oct, from inside the pods on k3d): store-second's woo-mcp reaches its own WordPress but is refused by store-demo's MySQL and WordPress; store-demo's woo-mcp is refused by store-second's MySQL, WordPress and woo-mcp
 
 ## Oct 24: Stand-out items
 
@@ -147,6 +148,8 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - `GET /audit-log` on the backend (admin only) reads the gateway's audit log for the dashboard, and `GET /audit-log/platform` the team, key and store changes
 - A registry change that is recorded and then fails to commit gets a second, `failed` event
 - The gateway records the registry changes it sees itself (`registry` events), so a change made in the database without the API shows up in the audit log
+- The store worker's rights stop at `store-*` namespaces: a ValidatingAdmissionPolicy makes the API server refuse it any namespace or RoleBinding elsewhere, which RBAC alone cannot say (20 Oct; `evil` and a RoleBinding in `kube-system` refused)
+- A worker killed in the middle of `helm` leaves no stuck release: the next run uninstalls a `pending-install` release or rolls back a `pending-upgrade` one first
 - Gateway hardening beyond the guide: no anonymous path, tokens in the URL refused, Host allowlist, health on a separate unpublished port, read-only database role, read-only container filesystem
 - The first store is a store like any other, not a special case: it has a row in `stores`, a subdomain checked by the one rule later stores will use (a DNS label of at most 30 characters, platform names such as `api` refused), and its server is `woo-<subdomain>`, limited to the admin and that store's members
 - The store's REST key belongs to a WordPress user with the Shop manager role, not to the administrator; the key pair comes from `.env` and the init script registers it, so nothing is clicked and nothing is read back out of WordPress
@@ -241,10 +244,21 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 - **The frontend's check in headless Chrome was done by hand,** not kept as a test.
 - **What a tool returned** (customer names and emails included) is stored in plain text for as long as a chat is kept: one to two days.
 
+### Stores from the dashboard
+
+- **More than one store worker.** Two copies would pick up the same store; claim rows with `FOR UPDATE SKIP LOCKED` first.
+- **Fulfilment for dashboard stores.** They get none, because one fulfilment database serves one store (keyed by the store's order number). One database per store, made by `db-init` or the worker, would allow it.
+- **Pod Security admission on store namespaces** (`pod-security.kubernetes.io/enforce: baseline`, set by the worker and required by the admission policy), so a compromised worker could not start a privileged pod there.
+- **A live progress stream** instead of the page reloading every 3 seconds.
+- **The store cap is count-then-insert:** two creates at the same instant can pass it by one.
+- **A server already called `woo-<subdomain>`** (added by hand) makes the worker skip registration.
+- **ARM servers:** the worker image downloads amd64 `helm` and `kubectl`.
+- **Docker Compose has no worker,** so stores made there stay pending.
+
 ### Tests and housekeeping
 
 - **A throwaway database for the end-to-end tests.** Each run leaves members, stores and audit rows in the dev database; with `SMTP_PASSWORD` set it sends real emails to made-up addresses, and with `GROQ_API_KEY` set its chat messages reach the model (`SMTP_PASSWORD= GROQ_API_KEY= ./run_tests.sh all` avoids both).
-- **Not tested:** several gateway replicas at once; Postgres going down while the gateway runs; the multi-store pages in a browser. (`fulfilment-mcp`'s SQL is tested against the real Postgres by `./run_tests.sh all`, in `fulfilment-mcp/tests/test_database.py`; not yet run, 16 Oct: Docker was not on the machine the code was written on.)
+- **Not tested:** several gateway replicas at once; Postgres going down while the gateway runs. The Stores page was used by hand on k3d (20 Oct), not kept as a test. (`fulfilment-mcp`'s SQL is tested against the real Postgres by `./run_tests.sh all`, in `fulfilment-mcp/tests/test_database.py`; not yet run, 16 Oct: Docker was not on the machine the code was written on.)
 - **No automated end-to-end test with a real WordPress.** The WooCommerce checkpoint was run once by script on 12 Oct and is not in `./run_tests.sh all`; only the store's registration is checked there. Add the scripted run with the chat step.
 - **A proper HTTP client for the audit calls.** `backend/app/services/gateway_audit.py` still calls the gateway's private port with the standard library in a worker thread. The chat agent brought an async client in (the MCP SDK's); move these calls onto it.
 
@@ -267,8 +281,8 @@ Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 ## WooCommerce New Store and MCP
 #### Design choices
 
-- A separate worker runs Helm, not the backend. It is the same image started with a different command, with no HTTP port and its own Kubernetes permissions, so the public API never holds the right to create namespaces.
-- The progress stream is SSE over Redis pub/sub (decided 12 Oct, replacing the re-read-every-second idea). The worker saves the row, then publishes the step; the endpoint subscribes first, then sends the row's current state, then forwards. Pub/sub does not replay, so after 15 quiet seconds the endpoint re-reads the row.
+- A separate worker runs Helm, not the backend: the backend's code in its own image with helm and kubectl added (`backend/Dockerfile.worker`), with no HTTP port and its own Kubernetes permissions, so the public API never holds the right to create namespaces.
+- Progress: the page reloads the store list every 3 seconds while a store is busy (the user's choice, 20 Oct). This replaced the SSE stream over Redis pub/sub decided on 12 Oct: much less code, and the row already holds the step.
 - Each step is safe to repeat (helm upgrade --install), so a restarted worker continues from the saved step.
 
 #### Decided on 12 Oct
@@ -280,7 +294,7 @@ Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 - Chat: the backend runs the tool loop as a LangGraph graph and calls the gateway as the signed-in user; conversations are saved in Postgres and deleted a day or two after last use; results on the left, chat on the right. The model is Groq for now; Bifrost in front of it with OpenRouter as the fallback is decided (13 Oct) and not built.
 - Local Kubernetes: k3d (13 Oct), the same distribution as a k3s VPS.
 - Deleting a store asks for its name again and a reason, and both are recorded.
-- A store that already exists is never created a second time. Registering it again connects to the one that is there; on Kubernetes its pods are started again if they are down, and its data is kept. Only an explicit delete removes a store's pods. Built today for the registry (the first store and its server are left as they are when they already exist); the pod part comes with the Create Store Service.
+- A store that already exists is never created a second time. Registering it again connects to the one that is there; on Kubernetes its pods are started again if they are down, and its data is kept. Only an explicit delete removes a store's pods. Built on 12 Oct for the registry (the first store and its server are left as they are when they already exist), and on 20 Oct for the cluster: every worker step is safe to repeat.
 - Servers 2 and 3 are Risk check and Fulfilment (16 Oct; Product photos was chosen first and dropped the same day, when no image provider would issue a key). Both are ours, written like `woo-mcp`, and registered by hand as the admin, which is also the demo's "add a server by URL and credential" step. Fulfilment keeps its records in the platform's Postgres, in a database and role of its own, not in a third database engine. On hold until said otherwise: Prometheus and Grafana.
 
 

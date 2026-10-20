@@ -10,6 +10,7 @@ the [design note](system-design.md).
 - Members' API keys and dashboard sessions.
 - The audit log being true.
 - The cluster's insides: the databases, the gateway's private port, the API's internal route.
+- The cluster itself: one pod, the store worker, may create namespaces and install charts.
 
 **Who we defend against:**
 - Anyone on the internet.
@@ -165,6 +166,46 @@ Neither is built.
 - **See customers' data in their stores.** Every member of a store can read its orders, and
   what tools return stays in their chat for one to two days.
 
+## 5. The store worker: the one pod with Kubernetes rights
+
+Stores made on the dashboard are installed by the store worker (`backend/app/worker.py`), a
+pod of its own. It is the only pod with a Kubernetes API token; the platform API has none, so a
+compromised API cannot touch the cluster.
+
+**What it may do, and what holds it there:**
+
+- **RBAC, cluster-wide:** create, change and delete namespaces; create RoleBindings; and `bind`
+  exactly one ClusterRole, `relay-store-installer` (the rights installing the store chart takes:
+  pods, Services, Secrets, volume claims, Deployments, StatefulSets, Jobs, Ingresses,
+  NetworkPolicies, quotas). That role is bound nowhere by the chart: the worker binds it in each
+  store namespace it makes, so it can install only where it has bound it.
+- **An admission policy, because RBAC cannot name namespaces by pattern.** With RBAC alone, the
+  worker could bind the installer role in `kube-system`, start a pod there under a powerful
+  service account and own the cluster, or delete any namespace. The ValidatingAdmissionPolicy
+  `relay-store-worker-scope` makes the API server refuse the worker's account any namespace or
+  RoleBinding change whose namespace is not `store-*`. Checked: creating `evil`, or a
+  RoleBinding in `kube-system`, as the worker is refused; `store-*` is allowed.
+- **NetworkPolicies:** it may reach Postgres, Redis, and the gateway's private port for the
+  audit log only (not `/mcp`, so it cannot call tools).
+- **Secrets it makes** come from the operating system's random generator and reach `kubectl` on
+  stdin, never on a command line (which other processes could read). Only the MCP token is
+  kept outside the store's namespace, encrypted like every server credential.
+- **Every registry change it makes** is in the gateway's audit log, and every create, retry and
+  delete of a store is in `admin_events` with who asked; a delete needs the name typed again and
+  a reason.
+
+**What is left:**
+
+- **Inside `store-*` it can do anything the installer role allows**, to every store: a
+  compromised worker could read every store's Secrets, change any store, or delete it.
+- **It could start a privileged pod in a store namespace.** Pod Security admission
+  (`pod-security.kubernetes.io/enforce: baseline` on store namespaces, set by the worker and
+  required by the admission policy) would close that; not built.
+- **It holds the platform's database password and the key that decrypts server credentials**,
+  as the API does. The admission policy limits it in the cluster, not in the database.
+- **The admin is trusted:** whoever holds the admin's session can delete stores, with the name
+  and a reason as the only friction, and the audit log as the record.
+
 ## Other threats
 
 | Threat | What stops it | What is left |
@@ -173,9 +214,10 @@ Neither is built.
 | A stolen dashboard session | The cookie is `HttpOnly` (no script can read it), `SameSite=Strict`, and `Secure` on https. Signing out revokes it at once, and the revocation survives a Redis restart (Redis keeps a disk) | A session lasts 12 hours; changing a password does not end other sessions |
 | Guessing passwords | 5 sign-ins a minute per address; bcrypt; "forgot password" answers the same for known and unknown emails | |
 | Reaching the cluster's insides | Only four names are public. MCP servers, databases and the gateway's private port have no Ingress rule. Default-deny NetworkPolicies allow each path on purpose (checked by `helm test`). The API's `/internal` route is refused at the Ingress (403) and needs a service token | Traffic out of pods is not limited |
-| A compromised pod | Containers run as non-root, with capabilities dropped, the default seccomp profile and no Kubernetes API token. The gateway's database role can read the server list and add audit rows, nothing more | The gateway and the API both hold the key that decrypts server credentials |
+| A compromised pod | Containers run as non-root, with capabilities dropped, the default seccomp profile and no Kubernetes API token, except the store worker (section 5). The gateway's database role can read the server list and add audit rows, nothing more | The gateway, the API and the store worker all hold the key that decrypts server credentials |
+| One store starving the others | Each store namespace has a ResourceQuota (CPU and memory requests, memory limits, storage, claims, pods) and a LimitRange; at most `maxStores` stores | Stores still share one node's disk and CPU |
 | Editing the audit log | The gateway's role can only add and read. A trigger refuses changes and deletions for everyone, the owner included. Each row carries an HMAC of the one before, so a changed, missing or reordered row shows under **Check now** | The platform's own log of team and server changes is append-only but not chained. Rows cut off the end of the gateway's log are not noticed (no copy elsewhere) |
-| Secrets leaking from the repo or the charts | No secret is in git, in a values file or in Helm's release record. Secrets are made with `kubectl` from git-ignored files of random values | Kubernetes Secrets are only base64 in the cluster's datastore unless k3s's `--secrets-encryption` is on |
+| Secrets leaking from the repo or the charts | No secret is in git, in a values file or in Helm's release record. Secrets are made with `kubectl` from git-ignored files of random values, or by the store worker for later stores (sent on stdin) | Kubernetes Secrets are only base64 in the cluster's datastore unless k3s's `--secrets-encryption` is on |
 | Customer data leaving | | Tool results, customer data included, go to the chat model's provider (Groq). The audit log keeps call arguments (with secret-looking fields removed) and is never pruned |
 
 ## The open risks, most important first
@@ -190,3 +232,5 @@ Neither is built.
    holds (section 3).
 5. **The platform API holds every member's fate:** if it is down, the gateway refuses everyone,
    and if it is compromised, it can decrypt every server credential.
+6. **A compromised store worker owns every store namespace**, and could start a privileged pod
+   in one until Pod Security admission is on there (section 5).
