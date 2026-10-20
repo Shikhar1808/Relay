@@ -118,7 +118,7 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 ## Oct 24: Stand-out items
 
 - [x] Rate limits per user and per IP
-- [ ] Per-role tool permissions
+- [x] Per-role tool permissions (20 Oct): each server has `admin_only_tools`; the gateway hides them from a member's list and refuses a direct call with the same "Unknown tool", recorded as `denied` with the real server and tool; the admin toggles them on the Servers page; WooCommerce's three write tools start locked on every store. Checked on the Compose stack end to end (list, refused call, audit row, unlock without a restart); the k3d check comes after the image upgrade
 - [ ] Prompt injection check on tool descriptions
 - [ ] Audit log heatmap
 - [x] Confirmation step for write tools in chat: a write waits for a yes or no, one question for all the writes in a reply; a tool with no hints counts as a write (13 Oct)

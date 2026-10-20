@@ -22,6 +22,10 @@ MCP client / chat agent ──► gateway :8080/mcp ──► upstream MCP serve
 - **Scopes by store.** An upstream with a `store_id` is only for callers who
   have that store; one without is shared. Applied when listing and again when
   calling, because a client can call a name it was never shown.
+- **Keeps tools for admins.** An upstream's `admin_only_tools` are left out of a
+  member's tool list and refused if called (the same "Unknown tool" as a name
+  that does not exist; the audit row names the real server and tool). The admin
+  passes everything. The role comes from the backend's token check.
 - **Survives bad upstreams.** A background loop re-reads the registry and every
   upstream's tools every 30 s, and at once when the backend reports a change.
   Requests read the finished snapshot, so a hung or dead upstream cannot slow
@@ -163,7 +167,7 @@ app/
   upstream.py   One MCP call to one upstream, with timeouts
   catalog.py    The refresh loop and the in-memory snapshot requests read
   auth.py       Token -> caller, by asking the backend
-  tools.py      tools/list and tools/call: naming and the store rule
+  tools.py      tools/list and tools/call: naming, the store rule and the tools kept for admins
   audit.py      The audit log: writing, the hash chain, `python -m app.audit`
   guard.py      Refused logins: recorded, counted, blocked after too many
   limits.py     Rate limits in Redis: a token bucket for tool calls, a counter for refused logins
@@ -220,7 +224,7 @@ gateway/.venv/Scripts/python gateway/tests/integration_test.py   # .venv/bin/pyt
 
 The unit tests need no running stack, except the call limit's token bucket:
 it is a Redis script, so those tests use the compose Redis and skip without it.
-They cover the naming and store rules, both handlers, the refresh
+They cover the naming, store and role rules, both handlers, the refresh
 loop (including Redis or the database being down), token resolution,
 credential decryption, the audit chain and detail levels, the audit routes on
 the private port, the block on refused logins and the per-user call limit.

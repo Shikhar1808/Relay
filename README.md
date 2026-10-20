@@ -231,6 +231,15 @@ it shows **Unreachable**, a call to it fails at once with a clear error, and the
 keep working. `--replicas=1` brings it back. (Deleting the pod alone is not enough to see it:
 Kubernetes starts a new one within seconds.)
 
+**Tools kept for admins.** Each tool on a card is a button: click it to keep that tool for
+admins. Members then don't see it in their tool list (or in the chat) and are refused with
+`Unknown tool` if they call it by name; admins keep every tool. It takes effect on the member's
+next request, and every change is in the audit log. Every store's server (`woo-<subdomain>`)
+starts with `create_product`, `update_product` and `update_order_status` kept for admins, so
+members can read orders and products but not change them. Other servers start open. The list
+is per server and per role (admin or member), not per person, and it names the tools to keep
+back: a tool a server adds later is open to members until an admin clicks it.
+
 ### Create and delete stores
 
 As the admin, on **Stores**: a name and a subdomain (lowercase letters, digits and hyphens; it
@@ -396,7 +405,7 @@ dashboard is on http://localhost:3000, the API on :8000, the gateway on
 http://localhost:8080/mcp and the store on :8081. Compose runs no store worker: a store
 created there stays **pending**.
 
-Tests: `./run_tests.sh` runs the unit tests of all five services (490, no running stack
+Tests: `./run_tests.sh` runs the unit tests of all five services (511, no running stack
 needed); `./run_tests.sh all` also starts the stack and runs the end-to-end tests, and
 fulfilment-mcp's tests against the real Postgres.
 
@@ -410,10 +419,11 @@ fulfilment-mcp's tests against the real Postgres.
 | Production-like VPS | `values-prod.yaml` for both charts; https checked on k3d; the VPS install is pending | `helm/*/values-prod.yaml` |
 | Observability, in part | The Servers page shows each server's status and tools; the audit log says why a call failed ("the server could not be reached", timeouts) and records each server going down and coming back. No metrics endpoint | `gateway/app/catalog.py`, `gateway/app/audit.py` |
 | Multi-store | Stores are created and deleted from the dashboard (above), several at once, each with status, step, error, address and created time. A store is one install of `helm/store` in its own namespace, with its own Secret, volumes, Ingress host, ResourceQuota, LimitRange and NetworkPolicies, and its own MCP server registered as `woo-<subdomain>`, so tool names say which store they act on. The worker's steps are safe to repeat, so Retry and a restarted worker finish a store instead of making a second one. Deleting removes the server, then the namespace (pods, volumes, Secrets), then the record | `backend/app/worker.py`, `backend/app/api/routes/stores.py`, `helm/store`, `helm/platform/templates/store-worker*.yaml` |
+| Per-role tool permissions | Each server has a list of tools only admins may use. The gateway leaves them out of a member's tool list and refuses a direct call with the same "Unknown tool" it gives for a name that doesn't exist, recording a `denied` row that names the real server and tool. An admin edits the list on the Servers page and it applies on the member's next request; WooCommerce's three write tools start locked on every store. Per role, not per person | `gateway/app/tools.py`, `backend/app/api/routes/upstreams.py`, `backend/migrations/versions/20261020_0008_admin_only_tools.py` |
 | Not from the brief | A tamper-evident audit log (each row chained with an HMAC; append-only by trigger); the chat asks before any change; each member sees only the servers of their stores | `gateway/README.md`, `backend/app/agent/` |
 
-Not attempted: OAuth on the gateway, per-role tool permissions, tool search for many tools,
-servers added by container image.
+Not attempted: OAuth on the gateway, tool search for many tools, servers added by container
+image, tool permissions per person.
 
 ## Known limits
 

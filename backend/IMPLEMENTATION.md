@@ -114,7 +114,7 @@ request, including for a chat session or API key issued earlier.
 |---|---|
 | Dashboard: `GET /stores` | Returns their stores, oldest first, or `[]` |
 | Chat: `POST /chat/message` | The stores are taken from the logged-in user, never from the message. A member with no store gets 403 |
-| Any MCP client (Claude Code, Cursor, the chat agent) through the gateway | `/internal/auth/resolve` returns `store_ids` for the API key or chat token. A member with no store gets `store_ids: []`; the admin gets every store, so the gateway filters the same way for everyone and never special-cases the role |
+| Any MCP client (Claude Code, Cursor, the chat agent) through the gateway | `/internal/auth/resolve` returns `store_ids` for the API key or chat token. A member with no store gets `store_ids: []`; the admin gets every store, so the store filter is the same for everyone. The resolve response also carries `role`, which the gateway uses only for the tool lock below |
 
 **Who enforces it at the gateway:** `gateway/app/tools.py`. It takes the
 stores from `store_ids` in the resolve response and nothing else — never from
@@ -122,6 +122,17 @@ a tool argument, a header, or anything the LLM wrote. An upstream with a
 `store_id` is listed and callable only for callers who have that store; one
 with no `store_id` is shared. Tool names are `slug__tool`, so a member in
 several stores can tell which store a tool acts on.
+
+**Tools kept for admins.** `upstream_servers.admin_only_tools` (a text array, migration 0008)
+names the server's own tools that only the admin may list or call. The gateway applies it with
+the `role` from the resolve response (`may_call` in `gateway/app/tools.py`): the admin passes
+everything, a member is refused those names with the same "Unknown tool" as any other refusal.
+The Servers page edits it with `PATCH /upstream-servers/{id}` (a list replaces it, `[]`
+unlocks everything, leaving it out changes nothing), which is recorded in the audit log like
+any server change, and publishes `upstreams:changed`, so it applies on the next request.
+The migration locks `create_product`, `update_product` and `update_order_status` on every
+`woo-%` server, and `WOO_ADMIN_ONLY_TOOLS` (`app/services/stores.py`) gives the same three to
+the first store and to every store the worker registers.
 
 The chat agent adds nothing to this rule and cannot get around it: it has no
 access to a store except through the gateway, with the user's chat token.
@@ -327,7 +338,7 @@ backend/
 | GET | `/chat/history/{id}` | JWT | user, 60/min | One of them, to read. 404 for an unknown id and for someone else's chat alike |
 | GET | `/upstream-servers` | JWT (admin) | user, 60/min | Lists registered MCP servers; `has_credential` only, never the credential |
 | POST | `/upstream-servers` | JWT (admin) | user, 60/min | Registers a server; 409 on a duplicate slug, 404 for an unknown store |
-| PATCH | `/upstream-servers/{id}` | JWT (admin) | user, 60/min | Changes only the fields sent (disable with `enabled: false`; `credential: ""` removes it). The slug is fixed |
+| PATCH | `/upstream-servers/{id}` | JWT (admin) | user, 60/min | Changes only the fields sent (disable with `enabled: false`; `credential: ""` removes it; `admin_only_tools` replaces the list of tools members cannot use, `[]` clears it). The slug is fixed |
 | DELETE | `/upstream-servers/{id}` | JWT (admin) | user, 60/min | Removes a server |
 | POST | `/internal/auth/resolve` | service token | none | Resolves an API key or chat token to a user identity and the stores they may touch |
 

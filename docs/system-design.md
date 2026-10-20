@@ -115,8 +115,11 @@ From Claude Code (or the chat agent) to the store and back, for `woo-demo__list_
    (`401`). A `Host` header it does not know gets `421`.
 3. The user's rate limit (120 calls a minute, in Redis) is checked.
 4. The name is split into `woo-demo` and `list_orders`. The server is looked up in the
-   gateway's in-memory list, and the user must have its store. An unknown tool and another
-   store's tool get the same answer, "Unknown tool", so nobody can map other stores' servers.
+   gateway's in-memory list, and the user must have its store. If the server lists the tool as
+   admin-only (`admin_only_tools`, set on the Servers page) the user must be the admin. An
+   unknown tool, another store's tool and a tool kept for admins get the same answer, "Unknown
+   tool", so nobody can map other stores' servers or locks. `tools/list` applies the same two
+   rules, so a tool that is hidden is also refused.
 5. The gateway opens an MCP session to `http://woo-mcp.store-demo.svc.cluster.local:8000/mcp`
    with that server's stored credential. The client's own key is never sent on.
 6. woo-mcp checks its token and its host name, and calls WooCommerce's REST API at
@@ -274,5 +277,6 @@ change.
 - **Docker Compose has no store worker**, so a store created there stays pending.
 - **One copy of Postgres and of MySQL**, with no backups.
 - **The chat on Groq's free tier** can run out of tokens on long questions (above).
-- **No OAuth for members, no per-role tool permissions, no guard on the address an admin
-  registers** (the last is in the threat model).
+- **No OAuth for members, no guard on the address an admin registers** (the last is in the
+  threat model). Tool permissions are per role and name the tools to keep back; there are none
+  per person.

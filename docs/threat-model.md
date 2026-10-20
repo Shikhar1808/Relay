@@ -37,10 +37,17 @@ their own API key:
 - read every order with the customers' names, emails and addresses;
 - start and advance shipments.
 
-There are no per-role tool permissions, so a member can do all that a server's credential
-allows. The chat asks the user before any change, but an MCP client with an API key does not
-ask. What limits it:
+Changing products and orders (the first point) is kept for admins by default (each server has
+a list of tools members cannot see or call, set on the Servers page), so a member gets it only if
+an admin unlocks it. The
+read tools and the fulfilment tools are open: nothing locks a tool unless it is on a server's
+list, and a tool a server adds later is open until an admin adds it. The chat asks the user
+before any change, but an MCP client with an API key does not ask. What limits it:
 
+- **Tools kept for admins.** The gateway leaves a locked tool out of a member's list and
+  refuses a direct call with the same "Unknown tool" it gives for a name that does not exist
+  (so a caller cannot tell a lock from a missing tool), checked on every call against the role
+  the API reports. The refusal is in the audit log with the real server and tool.
 - **Store scoping.** Only servers of the member's own stores are listed or callable, checked on
   every call against the stores the API reports, never against anything the caller sends.
 - **Attribution.** Every call is in the audit log under the member, with its arguments, and the
@@ -51,8 +58,8 @@ ask. What limits it:
 - **Revocation.** A revoked key, or a member who is deactivated or taken out of a store, is
   refused on the very next call: the gateway caches nothing about who a token belongs to.
 
-What would narrow it further: per-role tool permissions (members read, admins write), which
-are not built.
+What would narrow it further: a list that names the tools members may use instead of those they
+may not (a new tool would then start locked), and permissions per person, not only per role.
 
 ## 2. Why client tokens are not passed through to upstream servers
 
@@ -222,8 +229,9 @@ compromised API cannot touch the cluster.
 
 ## The open risks, most important first
 
-1. **Members can use every tool a server's credential allows**, with no per-role permissions
-   (section 1).
+1. **Members can use every tool of a server that nobody locked**: the WooCommerce write tools
+   start locked, but fulfilment's tools and any tool added later are open until an admin
+   adds them to the server's list (section 1).
 2. **The chat believes each server's own read-only marks**, so a malicious server can make its
    own destructive tool run without asking (section 3).
 3. **No guard on the address an admin registers**, and no limit on where pods connect out to
