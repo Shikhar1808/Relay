@@ -1,5 +1,6 @@
 """The refresh loop and the snapshot requests read (app/catalog.py)."""
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -218,6 +219,14 @@ async def test_a_server_deleted_and_made_again_under_the_same_name_is_seen(world
     cat, redis = Catalog(), FakeRedis()
     await cat.refresh(POOL, redis)
     again = make_upstream("github")
-    world["upstreams"] = {**world["upstreams"], "github": type(again)(id="another-id", slug="github", url=again.url, headers={}, store_id=None)}
+    world["upstreams"] = {**world["upstreams"], "github": replace(again, id="another-id")}
     await cat.refresh(POOL, redis)
     assert [e["changed"] for e in audit_events if e["category"] == "registry"] == [["recreated"]]
+
+
+async def test_a_change_of_the_tools_kept_for_admins_is_seen_and_named(world, audit_events):
+    cat, redis = Catalog(), FakeRedis()
+    await cat.refresh(POOL, redis)
+    world["upstreams"] = {**world["upstreams"], "github": make_upstream("github", admin_only_tools=["create_product"])}
+    await cat.refresh(POOL, redis)
+    assert [e["changed"] for e in audit_events if e["category"] == "registry"] == [["tool permissions"]]

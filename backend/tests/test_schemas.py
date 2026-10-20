@@ -20,6 +20,7 @@ def test_upstream_defaults():
     made = upstream()
     assert made.enabled is True and made.credential is None and made.store_id is None
     assert made.credential_header == "Authorization"
+    assert made.admin_only_tools == [], "nothing is kept for admins unless asked"
 
 
 @pytest.mark.parametrize("slug", ["woo", "store-a", "a1", "x" * 50, "github-mcp-2"])
@@ -81,6 +82,20 @@ def test_update_tells_omitted_apart_from_null_and_empty():
     # "" removes the credential; null store_id makes the server shared. Both must survive as "sent".
     sent = UpdateUpstreamRequest(credential="", store_id=None).model_dump(exclude_unset=True)
     assert sent == {"credential": "", "store_id": None}
+
+
+def test_the_tools_kept_for_admins_are_a_list_of_short_names():
+    assert upstream(admin_only_tools=["create_product", " update_product "]).admin_only_tools == ["create_product", "update_product"]
+    for bad in ([""], [" "], ["x" * 201], ["a"] * 201):
+        with pytest.raises(ValidationError):
+            upstream(admin_only_tools=bad)
+        with pytest.raises(ValidationError):
+            UpdateUpstreamRequest(admin_only_tools=bad)
+
+
+def test_update_tells_an_empty_list_apart_from_leaving_it_out():
+    assert "admin_only_tools" not in UpdateUpstreamRequest(enabled=True).model_dump(exclude_unset=True)
+    assert UpdateUpstreamRequest(admin_only_tools=[]).model_dump(exclude_unset=True) == {"admin_only_tools": []}
 
 
 def test_update_cannot_change_the_slug_and_applies_the_same_url_rule():

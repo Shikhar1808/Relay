@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, HttpUrl, StringConstraints
+from pydantic import AfterValidator, BaseModel, Field, HttpUrl, StringConstraints
 
 _Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 # No underscores at all: the gateway names tools `slug__tool` and splits on the
@@ -12,6 +12,9 @@ _HeaderName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9-]+$", max_l
 # Printable ASCII only: a CR or LF here would let an admin inject extra headers
 # into every request the gateway sends to this server.
 _Credential = Annotated[str, StringConstraints(pattern=r"^[\x20-\x7e]*$", max_length=4000)]
+
+
+_ToolName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 def _no_login_in_url(url: HttpUrl) -> HttpUrl:
@@ -34,6 +37,8 @@ class CreateUpstreamRequest(BaseModel):
     # The full header value, e.g. "Bearer abc123". Omit for a server with no credential.
     credential: _Credential | None = None
     store_id: uuid.UUID | None = None
+    # The server's own tool names (without the slug) that members cannot see or call.
+    admin_only_tools: list[_ToolName] = Field(default=[], max_length=200)
 
 
 class UpdateUpstreamRequest(BaseModel):
@@ -48,6 +53,8 @@ class UpdateUpstreamRequest(BaseModel):
     # Omitted: keep the stored credential. "": remove it. Anything else: replace it.
     credential: _Credential | None = None
     store_id: uuid.UUID | None = None
+    # Omitted or null: keep the list. A list replaces it; [] lets members use every tool.
+    admin_only_tools: list[_ToolName] | None = Field(default=None, max_length=200)
 
 
 class UpstreamOut(BaseModel):
@@ -59,6 +66,7 @@ class UpstreamOut(BaseModel):
     credential_header: str
     has_credential: bool  # the credential itself is never returned
     store_id: uuid.UUID | None
+    admin_only_tools: list[str]
     created_at: datetime
     # From the gateway's last probe, in the list only. "unknown": not probed yet, disabled, or the gateway is down.
     status: Literal["connected", "unreachable", "unknown"] = "unknown"

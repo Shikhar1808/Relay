@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 UPSTREAMS_CHANGED = "upstreams:changed"  # published by the backend's /upstream-servers routes
 # What the gateway can see change on a server, and what the audit log calls it. Never the credential itself.
-_WATCHED = {"id": "recreated", "url": "url", "headers": "credential", "store_id": "store"}
+_WATCHED = {"id": "recreated", "url": "url", "headers": "credential", "store_id": "store", "admin_only_tools": "tool permissions"}
 
 
 @dataclass(frozen=True)

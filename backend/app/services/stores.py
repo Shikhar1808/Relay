@@ -11,6 +11,9 @@ _SUBDOMAIN_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 # Short enough that woo-<subdomain>__update_order_status stays inside the 64 characters
 # many MCP clients allow for a tool name.
 _SUBDOMAIN_MAX = 30
+# What members may not do in a store: a new store's MCP server (woo-<subdomain>) starts with these
+# in its admin_only_tools, so members can read orders and products but not change them.
+WOO_ADMIN_ONLY_TOOLS = ("create_product", "update_product", "update_order_status")
 # Host names the platform itself will use next to the stores.
 _RESERVED_SUBDOMAINS = frozenset({"app", "api", "mcp", "www", "dev", "admin", "gateway", "dashboard"})
 

@@ -31,12 +31,13 @@ class Upstream:
     url: str
     headers: dict[str, str]  # the credential header, if the server has one
     store_id: str | None  # None: shared by everyone; else only callers who have this store
+    admin_only_tools: frozenset[str]  # tool names (the server's own, without the slug) that members may not see or call
 
 
 async def load_upstreams(pool: asyncpg.Pool) -> dict[str, Upstream]:
     """Every enabled upstream, by slug."""
     rows = await pool.fetch(
-        "SELECT id, slug, url, credential_header, credential_ciphertext, store_id"
+        "SELECT id, slug, url, credential_header, credential_ciphertext, store_id, admin_only_tools"
         " FROM upstream_servers WHERE enabled ORDER BY created_at"
     )
     upstreams: dict[str, Upstream] = {}
@@ -56,5 +57,6 @@ async def load_upstreams(pool: asyncpg.Pool) -> dict[str, Upstream]:
             url=row["url"],
             headers=headers,
             store_id=str(row["store_id"]) if row["store_id"] else None,
+            admin_only_tools=frozenset(row["admin_only_tools"]),
         )
     return upstreams

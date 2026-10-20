@@ -23,7 +23,7 @@ from app.core.security import hash_password
 from app.db.models import Role, Store, StoreStatus, UpstreamServer, User
 from app.db.session import AsyncSessionLocal
 from app.services.admin_audit import record
-from app.services.stores import check_subdomain
+from app.services.stores import WOO_ADMIN_ONLY_TOOLS, check_subdomain
 
 log = logging.getLogger("uvicorn.error")  # the logger uvicorn already prints
 
@@ -95,6 +95,7 @@ async def create_first_store_if_absent(db: AsyncSession, admin: User, request: R
             credential_header="Authorization",
             credential_ciphertext=encrypt(f"Bearer {settings.woo_mcp_token}"),
             store_id=store.id,
+            admin_only_tools=list(WOO_ADMIN_ONLY_TOOLS),
         )
     )
     record(db, request, admin, "store.create", subdomain, name=settings.first_store_name, by="startup" if request is None else "signup")

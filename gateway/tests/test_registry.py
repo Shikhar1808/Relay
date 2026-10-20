@@ -29,10 +29,11 @@ class FakePool:
         return self.rows
 
 
-def row(slug, credential=None, header="Authorization", store_id=None):
+def row(slug, credential=None, header="Authorization", store_id=None, admin_only_tools=()):
     return {
         "id": uuid.uuid4(), "slug": slug, "url": f"http://{slug}:9000/mcp",
         "credential_header": header, "credential_ciphertext": credential, "store_id": store_id,
+        "admin_only_tools": list(admin_only_tools),
     }
 
 
@@ -64,6 +65,13 @@ async def test_load_maps_rows_to_upstreams_by_slug():
     assert upstreams["github"].headers == {"X-Api-Key": "ghp_abc"} and upstreams["github"].store_id is None
     assert upstreams["open"].headers == {}, "a server with no credential gets no credential header"
     assert upstreams["woo"].id == str(rows[0]["id"])
+
+
+async def test_load_reads_the_tools_only_admins_may_use():
+    rows = [row("woo", admin_only_tools=["create_product", "update_order_status"]), row("open")]
+    upstreams = await load_upstreams(FakePool(rows))
+    assert upstreams["woo"].admin_only_tools == frozenset({"create_product", "update_order_status"})
+    assert upstreams["open"].admin_only_tools == frozenset()
 
 
 async def test_load_only_asks_for_enabled_upstreams():

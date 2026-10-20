@@ -27,6 +27,7 @@ from app.core.crypto import encrypt
 from app.db.models import Store, StoreStatus, UpstreamServer, User
 from app.db.session import AsyncSessionLocal
 from app.services.gateway_audit import record_and_commit
+from app.services.stores import WOO_ADMIN_ONLY_TOOLS
 
 log = logging.getLogger("app.worker")
 
@@ -101,6 +102,7 @@ async def register_server(store: Store, token: str) -> None:
                 credential_header="Authorization",
                 credential_ciphertext=encrypt(f"Bearer {token}"),
                 store_id=store.id,
+                admin_only_tools=list(WOO_ADMIN_ONLY_TOOLS),
             )
         )
         await db.flush()

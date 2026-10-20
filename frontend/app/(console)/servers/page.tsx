@@ -88,7 +88,20 @@ export default function ServersPage() {
                     <dt className="text-ink-soft">Credential</dt>
                     <dd>{server.has_credential ? `Stored, sent as ${server.credential_header}` : "None"}</dd>
                   </dl>
-                  <Tools server={server} />
+                  <Tools
+                    server={server}
+                    busy={rowAction.busy}
+                    onToggle={(tool) =>
+                      rowAction.run(async () => {
+                        const locked = server.admin_only_tools;
+                        await api(`/upstream-servers/${server.id}`, {
+                          method: "PATCH",
+                          body: { admin_only_tools: locked.includes(tool) ? locked.filter((t) => t !== tool) : [...locked, tool] },
+                        });
+                        await reload();
+                      })
+                    }
+                  />
 
                   {editingId === server.id ? (
                     <div className="arrive mt-4 bg-accent-wash/60 p-4">
@@ -153,7 +166,7 @@ function StatusPill({ server }: { server: UpstreamServer }) {
   return <Pill tone="warn">unchecked</Pill>;
 }
 
-function Tools({ server }: { server: UpstreamServer }) {
+function Tools({ server, busy, onToggle }: { server: UpstreamServer; busy: boolean; onToggle: (tool: string) => void }) {
   const note = (text: string) => <p className="mt-4 text-sm text-ink-soft">{text}</p>;
   if (!server.enabled) return note("Disabled: its tools are hidden from chat and API keys.");
   if (server.status === "unreachable")
@@ -163,12 +176,27 @@ function Tools({ server }: { server: UpstreamServer }) {
     <div className="mt-4">
       <p className="text-sm font-medium">Tools ({server.tools.length})</p>
       <ul className="mt-2 flex flex-wrap gap-1.5">
-        {server.tools.map((tool) => (
-          <li key={tool} className="border border-line px-2 py-1 font-mono text-xs">
-            {tool}
-          </li>
-        ))}
+        {server.tools.map((tool) => {
+          const adminOnly = server.admin_only_tools.includes(tool);
+          return (
+            <li key={tool}>
+              <button
+                type="button"
+                aria-pressed={adminOnly}
+                disabled={busy}
+                onClick={() => onToggle(tool)}
+                className={`border px-2 py-1 font-mono text-xs disabled:opacity-60 ${adminOnly ? "border-accent bg-accent-wash" : "border-line"}`}
+              >
+                {tool}
+                {adminOnly && <span className="ml-2 font-sans text-ink-soft">Admins only</span>}
+              </button>
+            </li>
+          );
+        })}
       </ul>
+      <p className="mt-2 text-sm text-ink-soft">
+        Click a tool to keep it for admins. Members don&apos;t see it and are refused if they call it.
+      </p>
     </div>
   );
 }

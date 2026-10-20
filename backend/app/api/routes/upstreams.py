@@ -46,6 +46,7 @@ def _out(server: UpstreamServer, **health: Any) -> UpstreamOut:
         credential_header=server.credential_header,
         has_credential=server.credential_ciphertext is not None,
         store_id=server.store_id,
+        admin_only_tools=server.admin_only_tools,
         created_at=server.created_at,
     )
 
@@ -104,6 +105,7 @@ async def create_upstream(
         credential_header=body.credential_header,
         credential_ciphertext=encrypt(body.credential) if body.credential else None,
         store_id=body.store_id,
+        admin_only_tools=body.admin_only_tools,
     )
     db.add(server)
     try:
@@ -144,7 +146,7 @@ async def update_upstream(
         credential = changes.pop("credential")
         server.credential_ciphertext = encrypt(credential) if credential else None
     for field, value in changes.items():
-        # name, url, enabled and credential_header are NOT NULL: an explicit null means "leave as is".
+        # name, url, enabled, credential_header and admin_only_tools are NOT NULL: an explicit null means "leave as is".
         if value is not None or field == "store_id":
             setattr(server, field, value)
     await record_and_commit(db, "upstream.update", admin, request, server.slug, _changes(body))

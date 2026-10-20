@@ -13,24 +13,29 @@ SHARED = make_upstream("github")
 STORE_A = make_upstream("store-a", store_id="A")
 STORE_B = make_upstream("store-b", store_id="B")
 DOWN = make_upstream("down")  # enabled, but it did not answer the last probe
+# Store C has two servers offering the same write tool; only one of them is locked.
+LOCKED = make_upstream("woo", store_id="C", admin_only_tools=["create_product"])
+OPEN = make_upstream("shop", store_id="C")
 
 
 @pytest.fixture(autouse=True)
 def world(monkeypatch):
     """Three reachable upstreams and one that is down; each test picks the caller."""
     snapshot = Snapshot(
-        upstreams={u.slug: u for u in (SHARED, STORE_A, STORE_B, DOWN)},
+        upstreams={u.slug: u for u in (SHARED, STORE_A, STORE_B, DOWN, LOCKED, OPEN)},
         tools={
             "github": [make_tool("list_repos"), make_tool("list_orders")],
             "store-a": [make_tool("list_orders")],
             "store-b": [make_tool("list_orders")],
+            "woo": [make_tool("list_orders"), make_tool("create_product")],
+            "shop": [make_tool("create_product")],
         },
     )
     monkeypatch.setattr(catalog, "snapshot", snapshot)
 
 
-def as_caller(monkeypatch, store_ids):
-    monkeypatch.setattr(tools, "get_access_token", lambda: make_caller(store_ids))
+def as_caller(monkeypatch, store_ids, role="member"):
+    monkeypatch.setattr(tools, "get_access_token", lambda: make_caller(store_ids, role=role))
 
 
 def text(result: types.CallToolResult) -> str:
@@ -66,11 +71,27 @@ def test_store_upstream_is_only_for_callers_with_that_store():
     assert not tools.may_use(STORE_A, []) and not tools.may_use(STORE_A, ["B"])
 
 
+# ---- the role rule ---------------------------------------------------------------
+
+
+def test_a_member_may_not_use_a_tool_the_server_keeps_for_admins():
+    assert not tools.may_call(LOCKED, "create_product", "member")
+    assert tools.may_call(LOCKED, "list_orders", "member")
+
+
+def test_an_admin_may_use_every_tool():
+    assert tools.may_call(LOCKED, "create_product", "admin")
+
+
+def test_a_locked_name_is_locked_on_that_server_only():
+    assert tools.may_call(OPEN, "create_product", "member")
+
+
 # ---- tools/list ----------------------------------------------------------------
 
 
-async def names_for(monkeypatch, store_ids) -> list[str]:
-    as_caller(monkeypatch, store_ids)
+async def names_for(monkeypatch, store_ids, role="member") -> list[str]:
+    as_caller(monkeypatch, store_ids, role)
     return sorted(tool.name for tool in (await tools.list_tools(None, None)).tools)
 
 
@@ -85,6 +106,16 @@ async def test_list_adds_the_callers_own_store_and_never_another(monkeypatch):
 async def test_list_for_a_member_in_two_stores_has_both_told_apart_by_prefix(monkeypatch):
     names = await names_for(monkeypatch, ["A", "B"])
     assert "store-a__list_orders" in names and "store-b__list_orders" in names and len(names) == 4
+
+
+async def test_list_hides_the_tools_kept_for_admins_from_a_member(monkeypatch):
+    names = await names_for(monkeypatch, ["C"])
+    assert "woo__list_orders" in names and "woo__create_product" not in names
+    assert "shop__create_product" in names, "the same tool name on a server that did not lock it stays"
+
+
+async def test_list_shows_an_admin_every_tool(monkeypatch):
+    assert "woo__create_product" in await names_for(monkeypatch, ["C"], role="admin")
 
 
 async def test_list_keeps_everything_but_the_name(monkeypatch):
@@ -147,6 +178,24 @@ async def test_call_refuses_other_stores_and_unknown_names_identically(monkeypat
     result = await call(name)
     assert result.is_error and text(result) == f"Unknown tool: {name}"
     assert upstream_calls == [], "a refused call must never reach an upstream"
+
+
+async def test_call_refuses_a_tool_kept_for_admins_exactly_like_an_unknown_one(monkeypatch, upstream_calls):
+    as_caller(monkeypatch, ["C"])
+    result = await call("woo__create_product", {"name": "Blue Mug"})
+    assert result.is_error and text(result) == "Unknown tool: woo__create_product"
+    assert upstream_calls == [], "a refused call must never reach an upstream"
+
+
+async def test_call_lets_an_admin_use_a_tool_kept_for_admins(monkeypatch, upstream_calls):
+    as_caller(monkeypatch, ["C"], role="admin")
+    assert not (await call("woo__create_product", {"name": "Blue Mug"})).is_error
+    assert upstream_calls == [("woo", "create_product", {"name": "Blue Mug"})]
+
+
+async def test_call_lets_a_member_use_the_same_tool_on_a_server_that_did_not_lock_it(monkeypatch, upstream_calls):
+    as_caller(monkeypatch, ["C"])
+    assert not (await call("shop__create_product")).is_error and upstream_calls == [("shop", "create_product", {})]
 
 
 async def test_call_is_checked_even_for_a_name_the_caller_was_never_shown(monkeypatch, upstream_calls):
@@ -241,6 +290,13 @@ async def test_a_refused_call_is_a_warning_and_the_log_tells_the_two_refusals_ap
         ("WARNING", "denied", "store-b", "list_orders"),
         ("WARNING", "denied", None, "nope__list_orders"),
     ]
+
+
+async def test_a_member_calling_a_tool_kept_for_admins_is_recorded_with_the_real_server_and_tool(monkeypatch, upstream_calls, audit_events):
+    as_caller(monkeypatch, ["C"])
+    await call("woo__create_product")
+    (event,) = audit_events
+    assert (event["severity"], event["outcome"], event["upstream"], event["tool"]) == ("WARNING", "denied", "woo", "create_product")
 
 
 async def test_upstream_failures_are_errors_in_the_log(monkeypatch, audit_events):

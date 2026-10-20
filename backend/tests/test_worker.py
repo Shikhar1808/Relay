@@ -259,6 +259,7 @@ async def test_a_ready_store_gets_its_server_registered_for_its_members_only(mon
     (server,) = [row for row in db.added if isinstance(row, UpstreamServer)]
     assert (server.slug, server.url, server.store_id) == ("woo-shop-two", "http://woo-mcp.store-shop-two.svc.cluster.local:8000/mcp", store.id)
     assert decrypt(server.credential_ciphertext) == "Bearer " + "t" * 48
+    assert server.admin_only_tools == ["create_product", "update_product", "update_order_status"], "members cannot write products or orders"
     # Recorded in the gateway's audit log before it is committed, like an admin's own change.
     assert log == [("event", "upstream.create", "woo-shop-two", None), "commit", ("publish", "upstreams:changed", "woo-shop-two")]
 

@@ -112,16 +112,21 @@ def counters(monkeypatch) -> FakeCounters:
     return fake
 
 
-def make_upstream(slug: str, store_id: str | None = None, headers: dict[str, str] | None = None) -> Upstream:
-    return Upstream(id=f"id-{slug}", slug=slug, url=f"http://{slug}.test/mcp", headers=headers or {}, store_id=store_id)
+def make_upstream(
+    slug: str, store_id: str | None = None, headers: dict[str, str] | None = None, admin_only_tools: list[str] | None = None
+) -> Upstream:
+    return Upstream(
+        id=f"id-{slug}", slug=slug, url=f"http://{slug}.test/mcp", headers=headers or {}, store_id=store_id,
+        admin_only_tools=frozenset(admin_only_tools or []),
+    )
 
 
 def make_tool(name: str) -> types.Tool:
     return types.Tool(name=name, description=f"{name} (test)", input_schema={"type": "object", "properties": {}})
 
 
-def make_caller(store_ids: list[str], subject: str = "user-1", token_type: str = "api_key") -> AccessToken:
+def make_caller(store_ids: list[str], subject: str = "user-1", token_type: str = "api_key", role: str = "member") -> AccessToken:
     return AccessToken(
         token="raw-token", client_id=token_type, scopes=[], subject=subject,
-        claims={"role": "member", "store_ids": store_ids, "token_type": token_type},
+        claims={"role": role, "store_ids": store_ids, "token_type": token_type},
     )

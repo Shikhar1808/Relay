@@ -80,6 +80,7 @@ async def test_the_first_store_is_a_store_row_with_an_upstream_that_belongs_to_i
     assert (upstream.slug, upstream.url, upstream.credential_header) == ("woo-demo", "http://woo-mcp:8000/mcp", "Authorization")
     assert upstream.store_id == store.id and store.id is not None
     assert decrypt(upstream.credential_ciphertext) == f"Bearer {TOKEN}"
+    assert upstream.admin_only_tools == ["create_product", "update_product", "update_order_status"], "members cannot write products or orders"
     assert db.commits == 1
 
 

@@ -42,6 +42,7 @@ export type UpstreamServer = {
   credential_header: string;
   has_credential: boolean;
   store_id: string | null; // null: every store
+  admin_only_tools: string[]; // members cannot see or call these (the server's own tool names)
   created_at: string;
   status: "connected" | "unreachable" | "unknown";
   tools: string[];

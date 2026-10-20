@@ -169,7 +169,7 @@ async def main() -> int:
         hung, dead, wrong = f"hung-{unique}", f"dead-{unique}", f"wrong-{unique}"
         await upstream(shared)
         alpha_row = await upstream(alpha, store_id=store_a)
-        await upstream(beta, store_id=store_b)
+        beta_row = await upstream(beta, store_id=store_b)
         hung_row = await upstream(hung, url="http://mock-hung:9000/mcp")
         await upstream(dead, url="http://mock-upstream:9999/mcp")
         wrong_row = await upstream(wrong, credential="Bearer not-the-secret")
@@ -240,6 +240,25 @@ async def main() -> int:
             result = await client.call_tool(f"{shared}__list_orders", {})
             assert not result.is_error, result
             _ok("and the gateway keeps working afterwards")
+
+        print("-- tools kept for admins")
+        locked, kept = f"{beta}__list_orders", {"admin_only_tools": ["list_orders"]}
+        r = await api.patch(f"/upstream-servers/{beta_row['id']}", json=kept, headers=admin)
+        assert r.status_code == 200 and r.json()["admin_only_tools"] == ["list_orders"], r.text
+        await _wait_for_tools(bob, set(), {locked})
+        async with Session(bob) as client:
+            result = await client.call_tool(locked, {})
+            assert result.is_error and result.content[0].text == f"Unknown tool: {locked}", result
+        _ok("a tool the admin keeps for admins is gone from the member's list and refused if called directly")
+        assert _logs(f"SELECT severity || ' ' || outcome || ' ' || upstream || ' ' || tool FROM audit_log WHERE user_id = '{bob_id}' AND outcome = 'denied'") == f"WARNING denied {beta} list_orders"
+        _ok("and the refusal names the real server and tool in the audit log")
+        r = await api.patch(f"/upstream-servers/{beta_row['id']}", json={"admin_only_tools": []}, headers=admin)
+        assert r.status_code == 200 and r.json()["admin_only_tools"] == [], r.text
+        await _wait_for_tools(bob, {locked})
+        async with Session(bob) as client:
+            result = await client.call_tool(locked, {})
+            assert not result.is_error and result.content[0].text == "list_orders ok", result
+        _ok("unlocking it brings it back on the member's next request, with no restart")
 
         print("-- the audit log")
         mine = f"FROM audit_log WHERE user_id = '{alice_id}'"

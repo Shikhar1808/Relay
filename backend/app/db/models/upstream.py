@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, func
+from sqlalchemy import ARRAY, Boolean, DateTime, ForeignKey, LargeBinary, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,6 +15,8 @@ class UpstreamServer(Base):
 
     store_id decides who may use it: NULL is shared by everyone, a value
     limits it to callers who have that store (see /internal/auth/resolve).
+    admin_only_tools names this server's tools that members cannot see or call;
+    the gateway applies it (gateway/app/tools.py).
     The credential is stored only as AES-256-GCM ciphertext (app/core/crypto.py)
     and is never returned by any API.
     """
@@ -31,4 +33,5 @@ class UpstreamServer(Base):
     store_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=True
     )
+    admin_only_tools: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, server_default=text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

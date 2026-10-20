@@ -8,6 +8,9 @@ Who may use an upstream: one with no store is shared by everyone; one that
 belongs to a store is only for callers who have that store. The rule is
 applied when listing and again when calling, because a client can call a
 name it was never shown.
+
+Which tools of that upstream: the admin may use all of them; a member not those
+the upstream lists as admin-only. Same two places, same answer when refused.
 """
 import logging
 import time
@@ -45,6 +48,10 @@ def may_use(upstream: Upstream, store_ids: list[str]) -> bool:
     return upstream.store_id is None or upstream.store_id in store_ids
 
 
+def may_call(upstream: Upstream, tool: str, role: str) -> bool:
+    return role == "admin" or tool not in upstream.admin_only_tools
+
+
 def _caller() -> AccessToken:
     caller = get_access_token()
     if caller is None:  # the bearer middleware should have refused the request already
@@ -57,14 +64,15 @@ def _error(text: str) -> types.CallToolResult:
 
 
 async def list_tools(ctx: ServerRequestContext[Any], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
-    store_ids = _caller().claims["store_ids"]
+    claims = _caller().claims
     snapshot = catalog.snapshot
     return types.ListToolsResult(
         tools=[
             tool.model_copy(update={"name": exposed_name(slug, tool.name)})
             for slug, tools in snapshot.tools.items()
-            if may_use(snapshot.upstreams[slug], store_ids)
+            if may_use(snapshot.upstreams[slug], claims["store_ids"])
             for tool in tools
+            if may_call(snapshot.upstreams[slug], tool.name, claims["role"])
         ]
     )
 
@@ -73,8 +81,13 @@ async def _route(caller: AccessToken, params: types.CallToolRequestParams) -> tu
     """Does the call. Returns how it ended (a key of _SEVERITY) and what the caller gets."""
     parts = split_name(params.name)
     upstream = catalog.snapshot.upstreams.get(parts[0]) if parts else None
-    if parts is None or upstream is None or not may_use(upstream, caller.claims["store_ids"]):
-        # One answer for "no such tool" and "not yours", so a caller cannot map other stores' servers.
+    if (
+        parts is None
+        or upstream is None
+        or not may_use(upstream, caller.claims["store_ids"])
+        or not may_call(upstream, parts[1], caller.claims["role"])
+    ):
+        # One answer for "no such tool", "not yours" and "admins only", so a caller cannot map other stores' servers or locks.
         return "denied", _error(f"Unknown tool: {params.name}")
     try:
         result = await upstream_client.call_tool(upstream, parts[1], params.arguments or {})
