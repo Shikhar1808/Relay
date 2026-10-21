@@ -65,14 +65,14 @@ images (Postgres, Redis, MySQL, WordPress) are downloaded by the cluster itself.
 worker's image is built from the repo root, because it carries the store chart:
 
 ```sh
-docker build -t relay-backend:0.2.1 backend
-docker build -t relay-gateway:0.1.0 gateway
-docker build -t relay-frontend:0.3.0 frontend
+docker build -t relay-backend:0.2.3 backend
+docker build -t relay-gateway:0.1.1 gateway
+docker build -t relay-frontend:0.3.2 frontend
 docker build -t relay-woo-mcp:0.1.0 woo-mcp
 docker build -t relay-risk-mcp:0.1.0 risk-mcp
 docker build -t relay-fulfilment-mcp:0.1.0 fulfilment-mcp
-docker build -f backend/Dockerfile.worker -t relay-store-worker:0.1.2 .
-k3d image import -c urumi relay-backend:0.2.1 relay-gateway:0.1.0 relay-frontend:0.3.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.2
+docker build -f backend/Dockerfile.worker -t relay-store-worker:0.1.3 .
+k3d image import -c urumi relay-backend:0.2.3 relay-gateway:0.1.1 relay-frontend:0.3.2 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.3
 ```
 
 **3. The secrets.** No secret is in the charts or in git. This writes two git-ignored files
@@ -326,7 +326,7 @@ What the server needs: Ubuntu 24.04 with a public IPv4 address, at least 4 GB of
 5. **The images:** build them as in local step 2, then copy them to the server:
 
    ```sh
-   docker save -o relay-images.tar relay-backend:0.2.1 relay-gateway:0.1.0 relay-frontend:0.3.0 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.2
+   docker save -o relay-images.tar relay-backend:0.2.3 relay-gateway:0.1.1 relay-frontend:0.3.2 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.3
    scp relay-images.tar <user>@<server>:
    ssh <user>@<server> 'sudo k3s ctr images import relay-images.tar && rm relay-images.tar'
    ```
