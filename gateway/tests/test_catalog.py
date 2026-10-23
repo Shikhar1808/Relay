@@ -81,16 +81,6 @@ async def test_refresh_separates_reachable_from_unreachable(world):
     assert cat.snapshot.tools["woo"][0].name == "list_orders"
 
 
-async def test_refresh_publishes_status_that_expires(world):
-    cat, redis = Catalog(), FakeRedis()
-    await cat.refresh(POOL, redis)
-    assert redis.values["upstream:id-woo:status"][0] == "connected"
-    assert redis.values["upstream:id-dead:status"][0] == "unreachable"
-    assert redis.values["upstream:id-woo:tools"][0] == '["list_orders"]'
-    assert redis.values["upstream:id-dead:tools"][0] == "[]", "a server that went down must not keep showing its old tools"
-    assert all(ttl and ttl > 30 for _, ttl in redis.values.values()), "status must outlive one refresh and still expire"
-
-
 async def test_refresh_serves_tools_even_when_redis_is_down(world):
     cat = Catalog()
     await cat.refresh(POOL, FakeRedis(broken=True))

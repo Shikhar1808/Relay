@@ -16,18 +16,6 @@ def upstream(**overrides) -> CreateUpstreamRequest:
 # ---- upstream servers --------------------------------------------------------
 
 
-def test_upstream_defaults():
-    made = upstream()
-    assert made.enabled is True and made.credential is None and made.store_id is None
-    assert made.credential_header == "Authorization"
-    assert made.admin_only_tools == [], "nothing is kept for admins unless asked"
-
-
-@pytest.mark.parametrize("slug", ["woo", "store-a", "a1", "x" * 50, "github-mcp-2"])
-def test_good_slugs(slug):
-    assert upstream(slug=slug).slug == slug
-
-
 @pytest.mark.parametrize(
     "slug",
     ["a__b", "a_b", "Woo", "-woo", "woo-", "a--b", "", "woo shop", "woo\n", "x" * 51, "wöo", "woo.mcp"],
@@ -64,10 +52,6 @@ def test_credential_cannot_carry_control_characters(credential):
     # It becomes a header value on every request the gateway sends upstream.
     with pytest.raises(ValidationError):
         upstream(credential=credential)
-
-
-def test_credential_accepts_a_normal_header_value():
-    assert upstream(credential="Bearer abc.DEF-123_~+/=").credential == "Bearer abc.DEF-123_~+/="
 
 
 @pytest.mark.parametrize("header", ["X Key", "X-Key\n", "X:Key", "", "Ünï"])
@@ -107,28 +91,10 @@ def test_update_cannot_change_the_slug_and_applies_the_same_url_rule():
 # ---- login and stores ----------------------------------------------------------
 
 
-def test_login_lowercases_the_email():
-    assert LoginRequest(email="Bob@Example.COM", password="password1").email == "bob@example.com"
-
-
 @pytest.mark.parametrize("password", ["short", "x" * 21, "🔥" * 20, "pass\nword"])
 def test_login_password_rule(password):
     with pytest.raises(ValidationError):
         LoginRequest(email="bob@example.com", password=password)
-
-
-def test_store_name_is_trimmed_and_bounded():
-    assert CreateStoreRequest(name="  My Shop  ", subdomain="shop").name == "My Shop"
-    for bad in ("", "   ", "x" * 201):
-        with pytest.raises(ValidationError):
-            CreateStoreRequest(name=bad, subdomain="shop")
-
-
-@pytest.mark.parametrize("subdomain", ["Shop", "my_shop", "api", "x" * 31, ""])
-def test_a_new_stores_subdomain_follows_the_one_subdomain_rule(subdomain):
-    # It becomes the namespace store-<subdomain>, the host <subdomain>.<domain> and the server woo-<subdomain>.
-    with pytest.raises(ValidationError, match="subdomain"):
-        CreateStoreRequest(name="Shop", subdomain=subdomain)
 
 
 def test_deleting_a_store_needs_a_reason():

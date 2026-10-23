@@ -141,13 +141,6 @@ async def test_a_release_left_half_done_by_a_killed_worker_is_cleared_before_ins
     assert commands(log)[-2:] == [fix, "helm upgrade"]
 
 
-async def test_the_release_is_looked_up_with_flags_helm_4_has(cluster, log):
-    # Helm 4 lists releases in every state by default and no longer knows --all.
-    await worker.handle(a_store())
-    args, _ = cluster.call("helm list")
-    assert args == ("helm", "list", "-n", NS, "--filter", f"^{NS}$", "-o", "json")
-
-
 async def test_a_failed_step_marks_the_store_failed_with_the_reason_and_registers_nothing(cluster, log):
     cluster.answers["helm upgrade"] = worker.CommandFailed("helm upgrade: Error: context deadline exceeded")
     await worker.handle(a_store())

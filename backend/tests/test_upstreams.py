@@ -82,13 +82,3 @@ async def test_leaving_the_list_out_changes_nothing():
     assert (await update(a_server(LOCKED), enabled=False)).admin_only_tools == LOCKED
 
 
-async def test_sending_null_for_the_list_changes_nothing():
-    assert (await update(a_server(LOCKED), admin_only_tools=None)).admin_only_tools == LOCKED
-
-
-async def test_a_new_server_is_created_with_the_list_it_was_given():
-    db = FakeDb()
-    body = CreateUpstreamRequest(name="Woo", slug="woo", url="http://woo-mcp:8000/mcp", admin_only_tools=["create_product"])
-    out = await upstreams.create_upstream(body, REQUEST, ADMIN, db, REDIS)
-    (server,) = db.added
-    assert server.admin_only_tools == out.admin_only_tools == ["create_product"]

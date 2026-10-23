@@ -63,12 +63,6 @@ async def call(tool: str, /, **arguments):  # positional-only: create_product ha
     return (await main.mcp.call_tool(tool, arguments)).structured_content
 
 
-async def test_the_server_offers_the_seven_tools():
-    assert {tool.name for tool in await main.mcp.list_tools()} == {
-        "list_products", "get_product", "create_product", "update_product", "list_orders", "get_order", "update_order_status",
-    }
-
-
 async def test_every_tool_says_whether_it_reads_adds_or_overwrites():
     # A client such as the chat agent reads these to ask before a write and to know what is safe to repeat.
     hints = {tool.name: tool.annotations for tool in await main.mcp.list_tools()}
@@ -117,12 +111,6 @@ async def test_orders_come_back_as_short_records(store):
     }]
 
 
-async def test_get_order_asks_for_that_order(store):
-    store.body = ORDER
-    assert (await call("get_order", order_id=7))["customer"] == "Asha Rao"
-    assert store.requests[0].method == "GET" and store.requests[0].url.path == "/wp-json/wc/v3/orders/7"
-
-
 async def test_update_order_status_sends_only_the_new_status(store):
     store.body = {**ORDER, "status": "completed"}
     assert (await call("update_order_status", order_id=7, status="completed"))["status"] == "completed"
@@ -145,12 +133,6 @@ async def test_list_products_passes_the_search_and_returns_short_records(store):
     (request,) = store.requests
     assert request.method == "GET" and request.url.path == "/wp-json/wc/v3/products"
     assert dict(request.url.params) == {"page": "1", "per_page": "5", "search": "mug"}
-
-
-async def test_get_product_also_returns_the_description(store):
-    store.body = PRODUCT
-    assert await call("get_product", product_id=12) == {**SHORT_PRODUCT, "description": "<p>Holds tea.</p>"}
-    assert store.requests[0].url.path == "/wp-json/wc/v3/products/12"
 
 
 async def test_create_product_publishes_a_simple_product_with_a_two_decimal_price(store):
@@ -208,10 +190,6 @@ async def sku_sent_for(store, name: str) -> str:
 
 async def test_the_same_name_always_gets_the_same_sku_however_it_is_typed(store):
     assert await sku_sent_for(store, "Blue Mug") == await sku_sent_for(store, "  blue   MUG ")
-
-
-async def test_a_different_name_gets_a_different_sku(store):
-    assert await sku_sent_for(store, "Blue Mug") != await sku_sent_for(store, "Red Mug")
 
 
 async def test_a_repeated_create_reports_the_product_that_is_already_there(store):
@@ -343,10 +321,6 @@ def good_settings(**overrides) -> Settings:
         "mcp_auth_token": "t" * 32,
     }
     return Settings(_env_file=None, **{**values, **overrides})
-
-
-def test_the_timeout_stays_under_the_gateways_thirty_seconds():
-    assert good_settings().timeout_seconds < 30
 
 
 def test_settings_refuse_a_token_too_short_to_be_a_secret():

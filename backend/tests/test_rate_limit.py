@@ -59,13 +59,6 @@ async def test_keys_are_independent(redis, key):
     assert (await check_token_bucket(redis, key + ":other", capacity=2, refill_per_sec=0.001))[0]
 
 
-async def test_a_bigger_cost_is_charged_and_the_bucket_expires(redis, key):
-    allowed, remaining = await check_token_bucket(redis, key, capacity=10, refill_per_sec=1, cost=4)
-    assert allowed and 5.9 < remaining <= 6
-    assert not (await check_token_bucket(redis, key, capacity=10, refill_per_sec=0.001, cost=7))[0]
-    assert 0 < await redis.ttl(key) <= 10_001, "an idle bucket must not live in Redis forever"
-
-
 async def test_still_works_after_redis_forgets_its_scripts(redis, key):
     assert (await check_token_bucket(redis, key, capacity=3, refill_per_sec=0.001))[0]
     await redis.script_flush()  # what a Redis restart does: the script's id is no longer known

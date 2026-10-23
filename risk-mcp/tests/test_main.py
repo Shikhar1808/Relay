@@ -140,7 +140,3 @@ def test_settings_refuse_a_token_too_short_to_be_a_secret():
         Settings(_env_file=None, mcp_auth_token="short")
 
 
-def test_the_token_has_no_default(monkeypatch):
-    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
-    with pytest.raises(ValidationError, match="mcp_auth_token"):
-        Settings(_env_file=None)

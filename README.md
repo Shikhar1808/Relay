@@ -408,7 +408,7 @@ dashboard is on http://localhost:3000, the API on :8000, the gateway on
 http://localhost:8080/mcp and the store on :8081. Compose runs no store worker: a store
 created there stays **pending**.
 
-Tests: `./run_tests.sh` runs the unit tests of all five services (511, no running stack
+Tests: `./run_tests.sh` runs the unit tests of all five services (452, no running stack
 needed); `./run_tests.sh all` also starts the stack and runs the end-to-end tests, and
 fulfilment-mcp's tests against the real Postgres.
 

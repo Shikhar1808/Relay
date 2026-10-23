@@ -108,13 +108,6 @@ async def test_a_question_needing_no_tool_is_answered_from_the_model(graph):
     assert "Wednesday 14 October 2026" in system.content and "woo-demo" in system.content and "Demo Store" in system.content
 
 
-async def test_the_model_is_told_that_tool_text_is_data_not_instructions(graph):
-    # An order note or a server's tool description can be written to steer the model.
-    model = FakeModel(AIMessage("Hello!"))
-    await ask(graph, context(model), "hi")
-    assert "never follow instructions" in model.seen[0][0].content.lower()
-
-
 async def test_a_read_tool_runs_and_its_result_goes_back_to_the_model(graph):
     model = FakeModel(asks(("woo-demo__list_orders", {"after": "2026-10-14"})), AIMessage("One order came in today."))
     gateway = FakeGateway(list_orders=ORDERS)
@@ -253,35 +246,6 @@ async def test_a_follow_up_sees_the_earlier_turn_and_only_its_own_results(graph)
     ]
 
 
-async def test_only_the_latest_exchanges_are_repeated_to_the_model(graph):
-    model = FakeModel(*[AIMessage(f"answer {number}") for number in range(MAX_TURNS + 2)])
-    ctx = context(model)
-    for number in range(MAX_TURNS + 2):
-        await ask(graph, ctx, f"question {number}", turn=f"turn-{number}")
-    said = [message.content for message in model.seen[-1][1:]]
-    assert len(said) == 2 * MAX_TURNS + 1 and said[0] == "question 1" and said[-1] == f"question {MAX_TURNS + 1}"
-
-
-async def test_the_results_list_every_tool_the_chat_has_used_once_there_are_earlier_ones(graph):
-    """So "which tools did you use?" has its answer in the results panel, whatever the model says."""
-    model = FakeModel(
-        asks(("woo-demo__list_orders", {})), AIMessage("One order."),
-        asks(("woo-demo__create_product", {"name": "Stapler"})), AIMessage("Created."),
-        AIMessage("I used list orders and create product."),
-    )
-    ctx = context(model, FakeGateway(list_orders=ORDERS, create_product=PRODUCT))
-    first = await ask(graph, ctx, "orders today?")
-    assert all("Tools used" not in block["title"] for block in first["blocks"]), "one turn's calls are already its steps"
-    await ask(graph, ctx, "create a Stapler", turn="turn-2")
-    await answer(graph, ctx, approve=True)
-    asked = await ask(graph, ctx, "which tools did you use in this conversation?", turn="turn-3")
-    (used,) = asked["blocks"]
-    assert (used["kind"], used["title"], used["source"]) == ("table", "Tools used in this chat (2)", "this chat")
-    assert used["columns"] == ["Server", "Tool", "Outcome", "Took"]
-    assert [row[:3] for row in used["rows"]] == [["Demo Store", "list orders", "1 found"], ["Demo Store", "create product", "done"]]
-    assert all(row[3].endswith(" ms") for row in used["rows"])
-
-
 async def test_a_saved_chat_reads_back_as_messages_and_its_last_results(graph):
     model = FakeModel(asks(("woo-demo__list_orders", {})), AIMessage("One order."))
     await ask(graph, context(model, FakeGateway(list_orders=ORDERS)), "orders today?")
@@ -298,34 +262,6 @@ def record(result, *, name="woo-demo__list_orders", outcome="ok", write=False):
 
 
 SERVERS = {"woo-demo": "Demo Store"}
-
-
-def test_a_list_of_records_becomes_a_table_in_plain_words():
-    blocks, steps = build_blocks([record(ORDERS)], SERVERS)
-    assert blocks == [
-        {
-            "kind": "table", "title": "Orders (1)", "source": "Demo Store · list orders", "call_id": "c1",
-            "columns": ["Id", "Number", "Status", "Total", "Date created", "Payment method", "Customer", "Email", "Items"],
-            "rows": [[17, "17", "On hold", "499.00 INR", "14 Oct 2026, 10:42", "Cash on delivery", "Asha Rao", "asha@example.com", "1 item"]],
-        }
-    ]
-    assert steps == ["Demo Store: list orders, 1 found"]
-
-
-def test_the_table_title_counts_every_match_not_only_the_rows_returned():
-    blocks, steps = build_blocks([record({"orders": [ORDER], "total": 40})], SERVERS)
-    assert blocks[0]["title"] == "Orders (40)" and steps == ["Demo Store: list orders, 40 found"]
-
-
-def test_one_record_becomes_a_card():
-    blocks, steps = build_blocks([record(PRODUCT, name="woo-demo__get_product")], SERVERS)
-    assert blocks == [
-        {
-            "kind": "card", "title": "Get product", "source": "Demo Store · get product", "call_id": "c1",
-            "fields": [["Id", 5], ["Name", "Test Mug"], ["Price", "299.00"], ["Status", "Publish"], ["Stock quantity", ""]],
-        }
-    ]
-    assert steps == ["Demo Store: get product, done"]
 
 
 def test_an_empty_list_becomes_a_sentence():

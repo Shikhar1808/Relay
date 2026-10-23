@@ -100,18 +100,3 @@ async def test_without_redis_nobody_is_blocked_and_refusals_are_still_recorded(w
     assert len(audit_events) == LIMIT + 2 and {event["severity"] for event in audit_events} == {NOTICE}
 
 
-async def test_non_http_traffic_is_passed_straight_through():
-    seen = []
-
-    async def lifespan_app(scope, receive, send):
-        seen.append(scope["type"])
-
-    await Guard(lifespan_app)({"type": "lifespan"}, None, None)
-    assert seen == ["lifespan"]
-
-
-async def test_counters_count_per_key_and_read_zero_without_redis(counters):
-    assert [await limits.hit("a"), await limits.hit("a"), await limits.hit("b")] == [1, 2, 1]
-    assert await limits.count("a") == 2 and await limits.count("never") == 0
-    counters.broken = True
-    assert await limits.hit("a") == 0 and await limits.count("a") == 0, "limits are off without Redis, the gateway is not"

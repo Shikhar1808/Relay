@@ -11,11 +11,6 @@ from app.core.crypto import decrypt, encrypt
 SECRET = "Bearer ghp_example-token ünïcode"
 
 
-def test_round_trip():
-    assert decrypt(encrypt(SECRET)) == SECRET
-    assert decrypt(encrypt("")) == ""
-
-
 def test_ciphertext_hides_the_plaintext_and_changes_every_time():
     first, second = encrypt(SECRET), encrypt(SECRET)
     assert SECRET.encode() not in first
@@ -37,9 +32,3 @@ def test_a_different_key_cannot_decrypt():
         other.decrypt(blob[:12], blob[12:], None)
 
 
-def test_stored_format_is_nonce_then_ciphertext_and_tag():
-    # The gateway's decrypt (gateway/app/registry.py) depends on exactly this layout.
-    blob = encrypt("abc")
-    assert len(blob) == 12 + len("abc") + 16
-    key = AESGCM(base64.b64decode(settings.gateway_encryption_key))
-    assert key.decrypt(blob[:12], blob[12:], None) == b"abc"

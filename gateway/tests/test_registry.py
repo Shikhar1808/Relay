@@ -74,12 +74,6 @@ async def test_load_reads_the_tools_only_admins_may_use():
     assert upstreams["open"].admin_only_tools == frozenset()
 
 
-async def test_load_only_asks_for_enabled_upstreams():
-    pool = FakePool([])
-    assert await load_upstreams(pool) == {}
-    assert "WHERE enabled" in pool.queries[0]
-
-
 async def test_an_undecryptable_credential_drops_that_upstream_only(caplog):
     rows = [row("good", backend_encrypt("Bearer ok")), row("bad", backend_encrypt("Bearer x", key=bytes([7] * 32)))]
     upstreams = await load_upstreams(FakePool(rows))

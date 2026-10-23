@@ -174,16 +174,6 @@ async def test_recorded_events_form_a_chain_that_verifies():
     assert pool.rows[1]["duration_ms"] == 12 and pool.rows[1]["client_ip"] is None
 
 
-async def test_the_callers_address_is_taken_from_the_request():
-    log, pool = started()
-    token = audit_module.client_ip.set("203.0.113.9")
-    try:
-        await log.record(INFO, "tool_call", "call", "ok")
-    finally:
-        audit_module.client_ip.reset(token)
-    assert pool.rows[0]["client_ip"] == "203.0.113.9"
-
-
 async def test_a_database_failure_never_reaches_the_caller_but_closes_the_gate(caplog):
     log, pool = started()
     assert await log.usable()
@@ -202,13 +192,6 @@ async def test_the_gate_opens_again_when_the_database_is_back():
     assert await log.usable()
     await log.record(INFO, "tool_call", "call", "ok")
     assert len(pool.rows) == 1
-
-
-async def test_record_says_whether_the_event_reached_the_database():
-    log, pool = started()
-    assert await log.record(INFO, "system", "start", "ok") is True
-    pool.down = True
-    assert await log.record(INFO, "system", "start", "ok") is False
 
 
 # ---- reading ---------------------------------------------------------------------

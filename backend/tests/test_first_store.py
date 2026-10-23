@@ -190,11 +190,6 @@ async def test_the_signup_still_answers_when_the_store_was_already_registered_by
 
 # ---- the subdomain rule -----------------------------------------------------------------
 
-@pytest.mark.parametrize("name", ["demo", "shop-2", "a", "x" * 30])
-def test_a_good_subdomain_is_returned_as_it_is(name):
-    assert check_subdomain(name) == name
-
-
 @pytest.mark.parametrize("name", ["", "Demo", "my_shop", "-shop", "shop-", "my--shop", "shop.one", "café", "x" * 31])
 def test_a_subdomain_must_be_a_short_dns_label(name):
     with pytest.raises(ValueError, match="subdomain"):

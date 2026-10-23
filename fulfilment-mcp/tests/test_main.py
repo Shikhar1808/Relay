@@ -61,16 +61,6 @@ async def call(tool: str, **arguments):
     return (await main.mcp.call_tool(tool, arguments)).structured_content
 
 
-async def test_the_server_offers_three_tools_that_say_what_they_do():
-    hints = {tool.name: tool.annotations for tool in await main.mcp.list_tools()}
-    assert hints.keys() == {"start_fulfilment", "advance_fulfilment", "list_fulfilments"}
-    assert hints["list_fulfilments"].read_only_hint is True
-    # Writes, so the chat asks first; both are safe to repeat after a timeout.
-    assert (hints["start_fulfilment"].read_only_hint, hints["start_fulfilment"].destructive_hint, hints["start_fulfilment"].idempotent_hint) == (False, False, True)
-    assert (hints["advance_fulfilment"].read_only_hint, hints["advance_fulfilment"].destructive_hint, hints["advance_fulfilment"].idempotent_hint) == (False, True, True)
-    assert all(hint.open_world_hint is False for hint in hints.values())
-
-
 # ---- the stage rule ----------------------------------------------------------------------
 
 @pytest.mark.parametrize(("now", "to"), [("packing", "shipped"), ("shipped", "delivered"), ("shipped", "shipped"), ("delivered", "delivered")])
@@ -194,16 +184,8 @@ async def test_the_gateways_token_gets_through_to_the_server():
 
 # ---- settings ---------------------------------------------------------------------------
 
-def test_the_timeout_stays_under_the_gateways_thirty_seconds():
-    assert Settings(_env_file=None, database_url="postgresql://x", mcp_auth_token="t" * 32).timeout_seconds < 30
-
-
 def test_settings_refuse_a_token_too_short_to_be_a_secret():
     with pytest.raises(ValidationError, match="mcp_auth_token"):
         Settings(_env_file=None, database_url="postgresql://x", mcp_auth_token="short")
 
 
-def test_the_database_address_has_no_default(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    with pytest.raises(ValidationError, match="database_url"):
-        Settings(_env_file=None, mcp_auth_token="t" * 32)

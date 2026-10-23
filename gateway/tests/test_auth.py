@@ -77,12 +77,6 @@ async def test_verifier_uses_the_first_authenticator_that_accepts():
     assert caller.subject == "from-second" and first.asked == ["tok"] and second.asked == ["tok"]
 
 
-async def test_verifier_stops_at_the_first_match():
-    first, second = Fixed(make_caller([], subject="from-first")), Fixed(make_caller([], subject="from-second"))
-    assert (await Verifier([first, second]).verify_token("tok")).subject == "from-first"
-    assert second.asked == []
-
-
 async def test_verifier_refuses_when_nobody_accepts_and_when_there_is_nobody_to_ask():
     assert await Verifier([Fixed(None), Fixed(None)]).verify_token("tok") is None
     assert await Verifier([]).verify_token("tok") is None

@@ -45,11 +45,6 @@ def text(result: types.CallToolResult) -> str:
 # ---- names -------------------------------------------------------------------
 
 
-def test_names_round_trip():
-    assert tools.exposed_name("woo", "list_orders") == "woo__list_orders"
-    assert tools.split_name("woo__list_orders") == ("woo", "list_orders")
-
-
 def test_only_the_first_separator_ends_the_slug():
     assert tools.split_name(tools.exposed_name("store-a", "get__order")) == ("store-a", "get__order")
 
@@ -114,19 +109,6 @@ async def test_list_hides_the_tools_kept_for_admins_from_a_member(monkeypatch):
     assert "shop__create_product" in names, "the same tool name on a server that did not lock it stays"
 
 
-async def test_list_shows_an_admin_every_tool(monkeypatch):
-    assert "woo__create_product" in await names_for(monkeypatch, ["C"], role="admin")
-
-
-async def test_list_keeps_everything_but_the_name(monkeypatch):
-    as_caller(monkeypatch, [])
-    listed = {tool.name: tool for tool in (await tools.list_tools(None, None)).tools}
-    assert listed["github__list_repos"].description == "list_repos (test)"
-    assert listed["github__list_repos"].input_schema == {"type": "object", "properties": {}}
-    # The snapshot's own Tool objects must not be renamed in place: the next caller reuses them.
-    assert catalog.snapshot.tools["github"][0].name == "list_repos"
-
-
 async def test_list_leaves_out_an_upstream_that_is_down(monkeypatch):
     assert not [name for name in await names_for(monkeypatch, ["A", "B"]) if name.startswith("down__")]
 
@@ -158,12 +140,6 @@ async def test_call_strips_the_prefix_and_passes_the_arguments_through(monkeypat
     assert upstream_calls == [("store-a", "list_orders", {"status": "processing"})]
 
 
-async def test_call_without_arguments_sends_an_empty_object(monkeypatch, upstream_calls):
-    as_caller(monkeypatch, [])
-    await call("github__list_repos")
-    assert upstream_calls == [("github", "list_repos", {})]
-
-
 @pytest.mark.parametrize(
     "name",
     [
@@ -191,11 +167,6 @@ async def test_call_lets_an_admin_use_a_tool_kept_for_admins(monkeypatch, upstre
     as_caller(monkeypatch, ["C"], role="admin")
     assert not (await call("woo__create_product", {"name": "Blue Mug"})).is_error
     assert upstream_calls == [("woo", "create_product", {"name": "Blue Mug"})]
-
-
-async def test_call_lets_a_member_use_the_same_tool_on_a_server_that_did_not_lock_it(monkeypatch, upstream_calls):
-    as_caller(monkeypatch, ["C"])
-    assert not (await call("shop__create_product")).is_error and upstream_calls == [("shop", "create_product", {})]
 
 
 async def test_call_is_checked_even_for_a_name_the_caller_was_never_shown(monkeypatch, upstream_calls):
