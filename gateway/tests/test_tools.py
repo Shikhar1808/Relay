@@ -1,6 +1,7 @@
 """tools/list and tools/call: the naming scheme and the store rule (app/tools.py)."""
 import pytest
 from mcp import types
+from prometheus_client import REGISTRY
 
 from app import tools
 from app.audit import chat_ref
@@ -332,3 +333,53 @@ async def test_without_redis_calls_are_not_limited(monkeypatch, upstream_calls, 
     as_caller(monkeypatch, [])
     counters.broken = True
     assert not any([(await call("github__list_repos")).is_error for _ in range(3)])
+
+
+# ---- the numbers Prometheus scrapes -------------------------------------------------
+
+
+def sample(name: str, **labels) -> float | None:
+    return REGISTRY.get_sample_value(name, labels)
+
+
+async def test_a_call_is_counted_and_timed_against_its_server_by_how_it_ended(monkeypatch, upstream_calls):
+    as_caller(monkeypatch, [])
+    ok, timed = {"server": "github", "outcome": "ok"}, {"server": "github", "outcome": "timeout"}
+    before = sample("relay_tool_calls_total", **ok) or 0
+    await call("github__list_repos")
+    assert sample("relay_tool_calls_total", **ok) == before + 1
+
+    async def too_slow(upstream, name, arguments):
+        raise TimeoutError
+
+    monkeypatch.setattr(tools.upstream_client, "call_tool", too_slow)
+    before = sample("relay_tool_calls_total", **timed) or 0
+    timings = sample("relay_tool_call_seconds_count", server="github")
+    await call("github__list_repos")
+    assert sample("relay_tool_calls_total", **timed) == before + 1
+    assert sample("relay_tool_call_seconds_count", server="github") == timings + 1
+
+
+async def test_a_name_the_caller_made_up_never_becomes_a_label(monkeypatch, upstream_calls):
+    as_caller(monkeypatch, [])
+    await call("typo-server-9__list_orders")
+    assert sample("relay_tool_calls_total", server="typo-server-9", outcome="denied") is None
+    assert sample("relay_tool_calls_total", server="unknown", outcome="denied")
+
+
+async def test_a_refused_call_to_a_real_server_is_counted_but_has_no_duration(monkeypatch, upstream_calls):
+    as_caller(monkeypatch, ["C"])
+    denied = {"server": "woo", "outcome": "denied"}
+    before, timings = sample("relay_tool_calls_total", **denied) or 0, sample("relay_tool_call_seconds_count", server="woo")
+    await call("woo__create_product")
+    assert sample("relay_tool_calls_total", **denied) == before + 1
+    assert sample("relay_tool_call_seconds_count", server="woo") == timings
+
+
+async def test_every_rate_limited_call_is_counted_though_only_one_row_is_logged(monkeypatch, upstream_calls):
+    monkeypatch.setattr(tools.settings, "calls_per_minute", 1)
+    as_caller(monkeypatch, [])
+    before = sample("relay_gateway_refusals_total", reason="rate_limited") or 0
+    for _ in range(4):
+        await call("github__list_repos")
+    assert sample("relay_gateway_refusals_total", reason="rate_limited") == before + 3

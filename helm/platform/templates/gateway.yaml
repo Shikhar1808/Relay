@@ -52,6 +52,8 @@ spec:
             # the Ingress, and "gateway" for the chat agent, which calls http://gateway:8080/mcp.
             - { name: ALLOWED_HOSTS, value: '["mcp.{{ .Values.domain }}", "mcp.{{ .Values.domain }}:*", "gateway:*"]' }
             - { name: FORWARDED_ALLOW_IPS, value: {{ .Values.podCidr | quote }} }
+            # Read-only token Prometheus scrapes with. optional: without it /metrics is simply off, the pod still starts.
+            - { name: METRICS_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: METRICS_TOKEN, optional: true } } }
           readinessProbe:
             httpGet: { path: /readyz, port: private }   # ready once the server list has been read
             periodSeconds: 5

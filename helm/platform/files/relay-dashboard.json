@@ -1,0 +1,25 @@
+{
+  "title": "Relay gateway", "uid": "relay", "schemaVersion": 39, "refresh": "30s", "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    { "id": 1, "type": "timeseries", "title": "Calls per second", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [{ "datasource": { "uid": "prometheus" }, "legendFormat": "{{server}} {{outcome}}",
+        "expr": "sum by (server, outcome) (rate(relay_tool_calls_total[5m]))" }] },
+    { "id": 2, "type": "timeseries", "title": "Error rate", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [{ "datasource": { "uid": "prometheus" }, "legendFormat": "{{server}}",
+        "expr": "sum by (server) (rate(relay_tool_calls_total{outcome!=\"ok\"}[5m])) / sum by (server) (rate(relay_tool_calls_total[5m]))" }] },
+    { "id": 3, "type": "timeseries", "title": "Latency p95", "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "datasource": { "uid": "prometheus" }, "legendFormat": "{{server}}",
+        "expr": "histogram_quantile(0.95, sum by (le, server) (rate(relay_tool_call_seconds_bucket[5m])))" }] },
+    { "id": 4, "type": "stat", "title": "Server up", "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 },
+      "fieldConfig": { "defaults": {
+        "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }] } },
+      "targets": [{ "datasource": { "uid": "prometheus" }, "legendFormat": "{{server}}", "expr": "relay_upstream_up" }] },
+    { "id": 5, "type": "stat", "title": "Stores by status", "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 },
+      "targets": [{ "datasource": { "uid": "prometheus" }, "legendFormat": "{{status}}", "expr": "relay_stores" }] },
+    { "id": 6, "type": "timeseries", "title": "Refused requests", "gridPos": { "x": 0, "y": 16, "w": 24, "h": 6 },
+      "targets": [{ "datasource": { "uid": "prometheus" }, "legendFormat": "{{reason}}",
+        "expr": "sum by (reason) (increase(relay_gateway_refusals_total[5m]))" }] }
+  ]
+}

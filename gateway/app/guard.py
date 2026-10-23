@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app import limits
+from app import limits, metrics
 from app.audit import NOTICE, WARNING, audit, chat_ref, client_ip
 from app.config import settings
 
@@ -50,6 +50,7 @@ class Guard:
         limit = settings.auth_failures_per_minute
 
         if await limits.count(key) >= limit:
+            metrics.REFUSALS.labels("blocked_address").inc()
             response = JSONResponse(
                 {"error": "too_many_failed_attempts"}, status_code=429, headers={"Retry-After": str(limits.WINDOW_SECONDS)}
             )
@@ -65,6 +66,7 @@ class Guard:
 
         await self._app(scope, receive, watch)
         if status == 401:
+            metrics.REFUSALS.labels("bad_token").inc()
             failures = await limits.hit(key)
             # The token itself is never recorded.
             await audit.record(WARNING if failures >= limit else NOTICE, "auth", "authenticate", "rejected", failures=failures)

@@ -60,6 +60,7 @@ app.include_router(upstreams.router)
 app.include_router(audit.router)
 app.include_router(chat.router)
 app.include_router(internal.router)
+app.include_router(internal.metrics_router)
 
 
 @app.get("/health")

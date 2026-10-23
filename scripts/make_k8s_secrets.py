@@ -30,6 +30,8 @@ platform = {
     "AUDIT_HMAC_KEY": url_safe(48),
     "ADMIN_PASSWORD": url_safe(12),  # 16 characters; the sign-in rule allows 8 to 20
     "RISK_MCP_TOKEN": url_safe(48),
+    "METRICS_TOKEN": url_safe(48),  # read-only: what Prometheus scrapes with, unlike INTERNAL_SERVICE_TOKEN
+    "GRAFANA_ADMIN_PASSWORD": url_safe(12),
     "SMTP_PASSWORD": os.environ.get("SMTP_PASSWORD", ""),
     "GROQ_API_KEY": os.environ.get("GROQ_API_KEY", ""),
     **shared,

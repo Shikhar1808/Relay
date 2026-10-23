@@ -39,6 +39,10 @@ spec:
         {{- include "relay.fromTraefik" . | nindent 8 }}
         - podSelector:
             matchLabels: { app: gateway }
+        {{- if .Values.monitoring.enabled }}
+        - podSelector:
+            matchLabels: { app: prometheus }    # /internal/metrics, with its own read-only token
+        {{- end }}
       ports:
         - { port: 8000, protocol: TCP }
 ---
@@ -68,6 +72,13 @@ spec:
             matchLabels: { app: store-worker }
       ports:
         - { port: 9090, protocol: TCP }    # the audit log, which records each server it adds or removes
+    {{- if .Values.monitoring.enabled }}
+    - from:
+        - podSelector:
+            matchLabels: { app: prometheus }
+      ports:
+        - { port: 9090, protocol: TCP }    # /metrics, with its own read-only token
+    {{- end }}
 ---
 # 5. Postgres: from the three that use it here, and from fulfilment-mcp in any store's
 #    namespace (a namespace marked urumi.io/store=true). That role can open only
@@ -142,4 +153,37 @@ spec:
         {{- include "relay.fromTraefik" . | nindent 8 }}
       ports:
         - { port: 8089, protocol: TCP }
+{{- end }}
+{{- if .Values.monitoring.enabled }}
+---
+# 9. Prometheus: from Grafana only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus
+spec:
+  podSelector:
+    matchLabels: { app: prometheus }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: grafana }
+      ports:
+        - { port: 9090, protocol: TCP }
+---
+# 10. Grafana, the only way to the metrics: from Traefik only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana
+spec:
+  podSelector:
+    matchLabels: { app: grafana }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- include "relay.fromTraefik" . | nindent 8 }}
+      ports:
+        - { port: 3000, protocol: TCP }
 {{- end }}

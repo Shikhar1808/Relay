@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     gateway_encryption_key: str
     # Shared secret the gateway sends to /internal/* (app/api/routes/internal.py).
     internal_service_token: str
+    # What Prometheus presents to /internal/metrics. Read-only, unlike the service token. Empty turns it off.
+    metrics_token: str = ""
     # The gateway's private port, where its audit log is written to and read
     # (app/services/gateway_audit.py). The same service token is sent there.
     gateway_internal_url: str = "http://gateway:9090"
@@ -114,6 +116,13 @@ class Settings(BaseSettings):
     def _service_token_is_long_enough(cls, value: str) -> str:
         if len(value) < 32:
             raise ValueError("INTERNAL_SERVICE_TOKEN must be at least 32 characters")
+        return value
+
+    @field_validator("metrics_token")
+    @classmethod
+    def _metrics_token_is_long_enough_when_set(cls, value: str) -> str:
+        if value and len(value) < 32:
+            raise ValueError("METRICS_TOKEN must be at least 32 characters, or empty")
         return value
 
     @field_validator("admin_email")

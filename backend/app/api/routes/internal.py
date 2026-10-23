@@ -15,16 +15,16 @@ import hmac
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_redis
 from app.core.security import sha256_hex
-from app.db.models import ApiKey, ChatToken, User
+from app.db.models import ApiKey, ChatToken, Store, StoreStatus, User
 from app.db.session import get_db
 from app.schemas.internal import ResolveTokenOut, ResolveTokenRequest
 from app.services.stores import stores_for_user
@@ -39,6 +39,21 @@ async def require_service_token(creds: HTTPAuthorizationCredentials | None = Dep
 
 
 router = APIRouter(prefix="/internal", tags=["internal"], dependencies=[Depends(require_service_token)])
+
+# Prometheus's door, with a token of its own: unlike the service token it cannot resolve tokens or write the audit log.
+# Under /internal on purpose: the Ingress refuses that whole path.
+metrics_router = APIRouter(prefix="/internal")
+
+
+@metrics_router.get("/metrics", include_in_schema=False)
+async def metrics(creds: HTTPAuthorizationCredentials | None = Depends(_bearer), db: AsyncSession = Depends(get_db)) -> Response:
+    if not settings.metrics_token:  # checked first: an empty token must never match an empty bearer
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    if creds is None or not hmac.compare_digest(creds.credentials, settings.metrics_token):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Metrics token required")
+    counts = dict((await db.execute(select(Store.status, func.count()).group_by(Store.status))).all())
+    lines = ["# TYPE relay_stores gauge", *(f'relay_stores{{status="{s.value}"}} {counts.get(s, 0)}' for s in StoreStatus)]
+    return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
 async def _resolved(db: AsyncSession, user: User, token_type: str) -> ResolveTokenOut:

@@ -15,6 +15,7 @@ import asyncpg
 from mcp import types
 from redis.asyncio import Redis
 
+from app import metrics
 from app import upstream as upstream_client
 from app.audit import ERROR, NOTICE, audit
 from app.config import settings
@@ -69,8 +70,11 @@ class Catalog:
 
         # One audit event when an upstream goes down or comes back, not one per probe.
         # A server seen for the first time is expected to answer, so only its failure is news.
+        for slug in before.upstreams.keys() - upstreams.keys():
+            metrics.UPSTREAM_UP.remove(slug)  # a removed or disabled server leaves the graph instead of staying at its last value
         for slug in upstreams:
             answered = slug in tools
+            metrics.UPSTREAM_UP.labels(slug).set(int(answered))
             if answered != (slug in before.tools if slug in before.upstreams else True):
                 await audit.record(
                     NOTICE if answered else ERROR, "upstream_health", "probe", "connected" if answered else "unreachable", upstream=slug

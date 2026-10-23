@@ -21,7 +21,7 @@ from mcp.server import ServerRequestContext
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 
-from app import limits
+from app import limits, metrics
 from app import upstream as upstream_client
 from app.audit import ERROR, INFO, WARNING, audit, chat_ref, describe_call
 from app.catalog import catalog
@@ -102,6 +102,7 @@ async def _route(caller: AccessToken, params: types.CallToolRequestParams) -> tu
 async def call_tool(ctx: ServerRequestContext[Any], params: types.CallToolRequestParams) -> types.CallToolResult:
     caller = _caller()
     if not await limits.take(f"ratelimit:gateway:calls:{caller.subject}", settings.calls_per_minute):
+        metrics.REFUSALS.labels("rate_limited").inc()  # every refused call, unlike the one audit row a minute
         if await limits.once(f"ratelimit:gateway:calls-noted:{caller.subject}"):  # one row a minute, not one per refused call
             await audit.record(
                 WARNING, "tool_call", "call", "rate_limited",
@@ -109,12 +110,17 @@ async def call_tool(ctx: ServerRequestContext[Any], params: types.CallToolReques
             )
         return _error(f"Rate limit: at most {settings.calls_per_minute} tool calls a minute. Try again in a moment.")
     if not await audit.usable():
+        metrics.REFUSALS.labels("audit_unavailable").inc()
         return _error("The audit log is unavailable, so no tool can be called right now")
     started = time.monotonic()
     outcome, result = await _route(caller, params)
     slug, _, tool = params.name.partition(SEPARATOR)
     # The caller gets one answer for every refusal; the log tells them apart: a server that exists is named here.
     known = slug in catalog.snapshot.upstreams
+    server = slug if known else "unknown"  # never the caller's own text: that would be a new series per typo
+    metrics.CALLS.labels(server, outcome).inc()
+    if outcome != "denied":  # a refusal never reached the server, so it has no duration to report
+        metrics.CALL_SECONDS.labels(server).observe(time.monotonic() - started)
     await audit.record(
         _SEVERITY[outcome],
         "tool_call",

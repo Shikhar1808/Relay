@@ -24,7 +24,7 @@ async def test_readyz_is_not_ready_until_the_registry_has_been_read(monkeypatch)
 
 def test_health_and_audit_routes_are_only_on_the_private_app():
     private_paths = {route.path for route in main.private_app.routes if isinstance(route, Route)}
-    assert private_paths == {"/healthz", "/readyz", "/internal/audit", "/internal/audit/verify"}
+    assert private_paths == {"/healthz", "/readyz", "/metrics", "/internal/audit", "/internal/audit/verify"}
     # The public app is nothing but the mounted MCP app: no route of our own that could skip authentication.
     assert all(isinstance(route, Mount) for route in main.public_app.routes) and len(main.public_app.routes) == 1
 
@@ -148,3 +148,37 @@ async def test_a_correction_for_a_change_that_failed_to_commit_is_a_warning(monk
 )
 async def test_a_malformed_admin_event_is_refused(body, audit_events):
     assert (await main._audit_write(private_request("POST", body=body))).status_code == 400 and audit_events == []
+
+
+METRICS = {"authorization": "Bearer " + "m" * 40}
+
+
+@pytest.fixture
+def metrics_on(monkeypatch):
+    monkeypatch.setattr(settings, "metrics_token", "m" * 40)
+
+
+@pytest.mark.parametrize("headers", [{}, {"authorization": "Bearer wrong"}, SERVICE])
+async def test_metrics_are_refused_without_the_metrics_token_even_with_the_service_token(headers, metrics_on):
+    # The service token can write the audit log; the scrape token is a different, read-only one.
+    assert (await main._metrics(private_request("GET", headers=headers))).status_code == 401
+
+
+async def test_metrics_are_served_with_the_metrics_token(metrics_on):
+    response = await main._metrics(private_request("GET", headers=METRICS))
+    assert response.status_code == 200 and b"relay_tool_calls_total" in response.body
+
+
+async def test_the_metrics_token_does_not_open_the_audit_routes(metrics_on):
+    assert (await main._audit_read(private_request("GET", headers=METRICS))).status_code == 401
+
+
+@pytest.mark.parametrize("headers", [{}, {"authorization": "Bearer "}, SERVICE])
+async def test_metrics_are_off_when_no_token_is_set_and_an_empty_bearer_opens_nothing(headers):
+    assert settings.metrics_token == ""
+    assert (await main._metrics(private_request("GET", headers=headers))).status_code == 404
+
+
+def test_a_metrics_token_too_short_to_be_a_secret_is_refused():
+    with pytest.raises(ValidationError, match="METRICS_TOKEN"):
+        good_settings(metrics_token="short")

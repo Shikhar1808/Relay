@@ -66,6 +66,8 @@ spec:
             - { name: STORE_DOMAIN, value: {{ .Values.domain | quote }} }
             - { name: STORE_SCHEME, value: {{ .Values.scheme | quote }} }
             - { name: MAX_STORES, value: {{ .Values.maxStores | quote }} }
+            # Read-only token Prometheus scrapes with. optional: without it /metrics is simply off, the pod still starts.
+            - { name: METRICS_TOKEN, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: METRICS_TOKEN, optional: true } } }
           readinessProbe:
             httpGet: { path: /health, port: http }
             periodSeconds: 5

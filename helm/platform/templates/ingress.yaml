@@ -1,5 +1,5 @@
-# The three public names, all through Traefik. With tls.enabled, cert-manager sees the
-# annotation, fetches one certificate for all three names into the Secret platform-tls,
+# The public names (app, api, mcp, and grafana with monitoring), all through Traefik. With tls.enabled,
+# cert-manager sees the annotation, fetches one certificate for all of them into the Secret platform-tls,
 # and the middleware below sends http:// visitors to https://.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -19,6 +19,9 @@ spec:
         - app.{{ .Values.domain }}
         - api.{{ .Values.domain }}
         - mcp.{{ .Values.domain }}
+        {{- if .Values.monitoring.enabled }}
+        - grafana.{{ .Values.domain }}
+        {{- end }}
   {{- end }}
   rules:
     - host: app.{{ .Values.domain }}
@@ -42,6 +45,15 @@ spec:
             pathType: Prefix
             backend:
               service: { name: gateway, port: { number: 8080 } }   # 8080 only: 9090 is never public
+    {{- if .Values.monitoring.enabled }}
+    - host: grafana.{{ .Values.domain }}        # the way to Prometheus's numbers; Prometheus itself has no Ingress
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: grafana, port: { number: 3000 } }
+    {{- end }}
 ---
 # /internal is the gateway's way into the backend, inside the cluster (http://backend:8000).
 # Through the Ingress it is refused for everyone: Traefik answers 403 before the backend sees it.

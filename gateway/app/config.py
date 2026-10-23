@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # and the shared secret that route demands.
     resolve_url: str
     internal_service_token: str
+    # What Prometheus presents on /metrics. Read-only, unlike the service token, which can also write
+    # the audit log. Empty turns /metrics off.
+    metrics_token: str = ""
     # Same key the backend encrypts upstream credentials with (32 bytes, base64).
     gateway_encryption_key: str
 
@@ -61,6 +64,13 @@ class Settings(BaseSettings):
             raise ValueError("GATEWAY_ENCRYPTION_KEY must be base64") from exc
         if size != 32:
             raise ValueError("GATEWAY_ENCRYPTION_KEY must decode to 32 bytes (AES-256)")
+        return value
+
+    @field_validator("metrics_token")
+    @classmethod
+    def _metrics_token_is_long_enough_when_set(cls, value: str) -> str:
+        if value and len(value) < 32:
+            raise ValueError("METRICS_TOKEN must be at least 32 characters, or empty")
         return value
 
 

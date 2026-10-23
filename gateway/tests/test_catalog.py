@@ -220,3 +220,17 @@ async def test_a_change_of_the_tools_kept_for_admins_is_seen_and_named(world, au
     world["upstreams"] = {**world["upstreams"], "github": make_upstream("github", admin_only_tools=["create_product"])}
     await cat.refresh(POOL, redis)
     assert [e["changed"] for e in audit_events if e["category"] == "registry"] == [["tool permissions"]]
+
+
+async def test_the_up_gauge_follows_each_probe_and_a_removed_server_leaves_it(world):
+    from prometheus_client import REGISTRY
+
+    def up(slug):
+        return REGISTRY.get_sample_value("relay_upstream_up", {"server": slug})
+
+    cat, redis = Catalog(), FakeRedis()
+    await cat.refresh(POOL, redis)
+    assert (up("woo"), up("github"), up("dead")) == (1, 1, 0)
+    world["upstreams"] = {k: v for k, v in world["upstreams"].items() if k != "dead"}  # a new dict, as the real loader returns
+    await cat.refresh(POOL, redis)
+    assert up("dead") is None and up("woo") == 1

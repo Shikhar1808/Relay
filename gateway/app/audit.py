@@ -32,6 +32,7 @@ from typing import Any
 
 import asyncpg
 
+from app import metrics
 from app.config import settings
 
 log = logging.getLogger("audit")
@@ -162,6 +163,7 @@ class Audit:
                     )
         except Exception as exc:
             self._stored_last = False
+            metrics.AUDIT_FAILURES.inc()
             log.critical("NOT STORED (%s) %s", type(exc).__name__, json.dumps(line))
             return False
         self._stored_last = True

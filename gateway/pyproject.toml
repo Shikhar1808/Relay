@@ -10,6 +10,7 @@ dependencies = [
     "redis==5.2.1",
     "cryptography==46.0.3",
     "pydantic-settings==2.6.1",
+    "prometheus-client==0.26.0",
 ]
 
 [tool.uv]

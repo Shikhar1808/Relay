@@ -1,9 +1,9 @@
 """Builds the two ASGI apps and runs them.
 
 Public app (PORT): /mcp only. Private app (PRIVATE_PORT): health checks, for
-the container runtime and the cluster, and the audit log for the backend
-(service token required). Keeping them on separate ports means an Ingress
-that exposes the gateway cannot expose anything but MCP.
+the container runtime and the cluster, the audit log for the backend (service
+token required) and `/metrics` for Prometheus (its own token). Keeping them on
+separate ports means an Ingress that exposes the gateway cannot expose anything but MCP.
 
 Run with `python -m app`.
 """
@@ -20,10 +20,11 @@ import uvicorn
 from mcp.server import Server
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 
 from app import limits
@@ -93,12 +94,25 @@ async def _readyz(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "upstreams": len(snapshot.upstreams), "reachable": len(snapshot.tools)})
 
 
-def _service_token_missing(request: Request) -> JSONResponse | None:
+def _token_missing(request: Request, expected: str) -> JSONResponse | None:
     sent = request.headers.get("authorization", "")
     # compare_digest: a plain == would leak how many leading characters matched.
-    if hmac.compare_digest(sent.encode(), f"Bearer {settings.internal_service_token}".encode()):
+    if hmac.compare_digest(sent.encode(), f"Bearer {expected}".encode()):
         return None
     return JSONResponse({"error": "service token required"}, status_code=401)
+
+
+def _service_token_missing(request: Request) -> JSONResponse | None:
+    return _token_missing(request, settings.internal_service_token)
+
+
+async def _metrics(request: Request) -> Response:
+    """What Prometheus scrapes, with a token of its own: unlike the service token it cannot write the audit log."""
+    if not settings.metrics_token:  # checked first: an empty token must never match "Bearer "
+        return JSONResponse({"error": "metrics are off"}, status_code=404)
+    if refusal := _token_missing(request, settings.metrics_token):
+        return refusal
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 async def _audit_read(request: Request) -> JSONResponse:
@@ -158,6 +172,7 @@ private_app = Starlette(
     routes=[
         Route("/healthz", _healthz),
         Route("/readyz", _readyz),
+        Route("/metrics", _metrics),
         Route("/internal/audit", _audit_read, methods=["GET"]),
         Route("/internal/audit", _audit_write, methods=["POST"]),
         Route("/internal/audit/verify", _audit_verify, methods=["GET"]),

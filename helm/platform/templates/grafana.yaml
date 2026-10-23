@@ -1,0 +1,91 @@
+{{- if .Values.monitoring.enabled }}
+# Grafana: the only door to the metrics. Its own login, no anonymous access, no sign-up.
+# Everything is provisioned from files, so it keeps nothing and an emptyDir is enough.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - { name: Prometheus, uid: prometheus, type: prometheus, access: proxy, url: "http://prometheus:9090", isDefault: true }
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - { name: relay, type: file, options: { path: /var/lib/grafana-dashboards } }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard
+data:
+  relay.json: |-
+    {{- .Files.Get "files/relay-dashboard.json" | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels: { app: grafana }
+spec:
+  selector: { app: grafana }
+  ports:
+    - { name: web, port: 3000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: grafana
+          image: {{ .Values.images.grafana }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - { name: web, containerPort: 3000 }
+          env:
+            - { name: GF_SECURITY_ADMIN_USER, value: admin }
+            - { name: GF_SECURITY_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: GRAFANA_ADMIN_PASSWORD } } }
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "false" }
+            - { name: GF_USERS_ALLOW_SIGN_UP, value: "false" }
+            - { name: GF_SERVER_ROOT_URL, value: "{{ .Values.scheme }}://grafana.{{ .Values.domain }}" }
+            - { name: GF_ANALYTICS_REPORTING_ENABLED, value: "false" }
+          readinessProbe:
+            httpGet: { path: /api/health, port: web }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /api/health, port: web }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: provisioning, mountPath: /etc/grafana/provisioning/datasources/datasource.yaml, subPath: datasource.yaml }
+            - { name: provisioning, mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml, subPath: dashboards.yaml }
+            - { name: dashboard, mountPath: /var/lib/grafana-dashboards }
+            - { name: data, mountPath: /var/lib/grafana }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: provisioning, configMap: { name: grafana-provisioning } }
+        - { name: dashboard, configMap: { name: grafana-dashboard } }
+        - { name: data, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+{{- end }}
