@@ -65,14 +65,14 @@ images (Postgres, Redis, MySQL, WordPress) are downloaded by the cluster itself.
 worker's image is built from the repo root, because it carries the store chart:
 
 ```sh
-docker build -t relay-backend:0.2.3 backend
-docker build -t relay-gateway:0.1.1 gateway
+docker build -t relay-backend:0.2.4 backend
+docker build -t relay-gateway:0.1.2 gateway
 docker build -t relay-frontend:0.3.2 frontend
 docker build -t relay-woo-mcp:0.1.0 woo-mcp
 docker build -t relay-risk-mcp:0.1.0 risk-mcp
 docker build -t relay-fulfilment-mcp:0.1.0 fulfilment-mcp
 docker build -f backend/Dockerfile.worker -t relay-store-worker:0.1.3 .
-k3d image import -c urumi relay-backend:0.2.3 relay-gateway:0.1.1 relay-frontend:0.3.2 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.3
+k3d image import -c urumi relay-backend:0.2.4 relay-gateway:0.1.2 relay-frontend:0.3.2 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.3
 ```
 
 **3. The secrets.** No secret is in the charts or in git. This writes two git-ignored files
@@ -326,7 +326,7 @@ What the server needs: Ubuntu 24.04 with a public IPv4 address, at least 4 GB of
 5. **The images:** build them as in local step 2, then copy them to the server:
 
    ```sh
-   docker save -o relay-images.tar relay-backend:0.2.3 relay-gateway:0.1.1 relay-frontend:0.3.2 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.3
+   docker save -o relay-images.tar relay-backend:0.2.4 relay-gateway:0.1.2 relay-frontend:0.3.2 relay-woo-mcp:0.1.0 relay-risk-mcp:0.1.0 relay-fulfilment-mcp:0.1.0 relay-store-worker:0.1.3
    scp relay-images.tar <user>@<server>:
    ssh <user>@<server> 'sudo k3s ctr images import relay-images.tar && rm relay-images.tar'
    ```
@@ -400,6 +400,30 @@ whenever `helm/store` changes:
    demo store's, so the store would be renamed "Demo Store", take the demo store's address, and
    get a fulfilment server whose keys its Secret does not have.
 
+## Monitoring
+
+`helm/platform` installs Prometheus and Grafana in the `urumi` namespace (`monitoring.enabled`, default
+`true`; set it to `false` to leave them out). Prometheus scrapes the gateway (`gateway:9090/metrics`) and
+the backend (`backend:8000/internal/metrics`) every 15 s and keeps 3 days on a 3Gi volume.
+
+- **Open it:** `http://grafana.127.0.0.1.nip.io` locally (`https://grafana.<domain>` on the VPS). Sign in as `admin`
+  with `GRAFANA_ADMIN_PASSWORD` from `.env.k8s-platform`. The dashboard is "Relay gateway".
+- **Prometheus itself** has no Ingress: `kubectl -n urumi port-forward svc/prometheus 9091:9090`, then
+  http://localhost:9091 (Status, Targets: both should be UP).
+- **Who can see what:** Grafana has one login (`admin`), no anonymous access and no sign-up. Prometheus accepts
+  connections from Grafana only. The scrape routes need `METRICS_TOKEN`, a read-only token of their own: the
+  service token cannot open `/metrics`, and `METRICS_TOKEN` cannot open the audit log. Without `METRICS_TOKEN`
+  the routes answer 404 and the pods still start.
+- **An existing cluster** made before monitoring existed needs the two new keys once, then the images and chart:
+  add `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` (`url_safe(48)` and `url_safe(12)`, as in
+  `scripts/make_k8s_secrets.py`) to the Secret with `kubectl -n urumi patch secret urumi-platform --type merge -p ...`
+  and to `.env.k8s-platform`, rebuild and import `relay-backend` and `relay-gateway`, then `helm upgrade` the platform.
+- **See it work:** make some calls (chat or an MCP client), then `kubectl -n urumi scale deploy/risk-mcp --replicas=0`:
+  within about 45 s "Server up" shows `risk` DOWN; scale it back and it recovers.
+- **Limits:** counters are per gateway process (with several replicas, add them up in the query:
+  `sum by (server) (...)`). The MCP servers and the store worker expose no metrics. "Admin" means Grafana's admin, not
+  the platform's role; signing in to Grafana with the platform's login is in `TIMELINE.md`, "Future expansion".
+
 ## Development without Kubernetes
 
 `docker-compose.yml` runs the same services for development: copy `.env.example` to `.env`,
@@ -408,7 +432,7 @@ dashboard is on http://localhost:3000, the API on :8000, the gateway on
 http://localhost:8080/mcp and the store on :8081. Compose runs no store worker: a store
 created there stays **pending**.
 
-Tests: `./run_tests.sh` runs the unit tests of all five services (452, no running stack
+Tests: `./run_tests.sh` runs the unit tests of all five services (474, no running stack
 needed); `./run_tests.sh all` also starts the stack and runs the end-to-end tests, and
 fulfilment-mcp's tests against the real Postgres.
 
@@ -420,7 +444,7 @@ fulfilment-mcp's tests against the real Postgres.
 | Rate limits per user and per key | The gateway allows each user 120 tool calls a minute (token bucket); the API limits sign-ins by address and requests by user | `gateway/app/limits.py`, `backend/app/core/rate_limit.py` |
 | Upgrades and rollback | Documented above; Jobs per revision; volumes outlive releases | this README |
 | Production-like VPS | `values-prod.yaml` for both charts; https checked on k3d; the VPS install is pending | `helm/*/values-prod.yaml` |
-| Observability, in part | The Servers page shows each server's status and tools; the audit log says why a call failed ("the server could not be reached", timeouts) and records each server going down and coming back. No metrics endpoint | `gateway/app/catalog.py`, `gateway/app/audit.py` |
+| Observability | Prometheus and Grafana in `helm/platform` (`monitoring.enabled`, on by default). The gateway counts every tool call by server and outcome (`ok`, `error`, `denied`, `timeout`, `unreachable`), times it, and says whether each server answered its last probe; refused requests (rate limit, blocked address, bad token, audit log down) and audit write failures are counted too. The backend reports stores by status. Dashboard "Relay gateway" at `grafana.<domain>`: calls and errors per server, p95 latency, server up/down, stores, refusals. Only the Grafana admin can see it (own login, no anonymous access or sign-up); Prometheus has no Ingress; both scrape routes need a read-only `METRICS_TOKEN`. The Servers page and the audit log still say why a call failed. No metrics from the MCP servers themselves or the store worker. Details, and why plain manifests and not the stock charts: [Monitoring](#monitoring) | `gateway/app/metrics.py`, `helm/platform/templates/prometheus.yaml`, `grafana.yaml`, `helm/platform/files/relay-dashboard.json` |
 | Multi-store | Stores are created and deleted from the dashboard (above), several at once, each with status, step, error, address and created time. A store is one install of `helm/store` in its own namespace, with its own Secret, volumes, Ingress host, ResourceQuota, LimitRange and NetworkPolicies, and its own MCP server registered as `woo-<subdomain>`, so tool names say which store they act on. The worker's steps are safe to repeat, so Retry and a restarted worker finish a store instead of making a second one. Deleting removes the server, then the namespace (pods, volumes, Secrets), then the record | `backend/app/worker.py`, `backend/app/api/routes/stores.py`, `helm/store`, `helm/platform/templates/store-worker*.yaml` |
 | Per-role tool permissions | Each server has a list of tools only admins may use. The gateway leaves them out of a member's tool list and refuses a direct call with the same "Unknown tool" it gives for a name that doesn't exist, recording a `denied` row that names the real server and tool. An admin edits the list on the Servers page and it applies on the member's next request; WooCommerce's three write tools start locked on every store. Per role, not per person | `gateway/app/tools.py`, `backend/app/api/routes/upstreams.py`, `backend/migrations/versions/20261020_0008_admin_only_tools.py` |
 | Not from the brief | A tamper-evident audit log (each row chained with an HMAC; append-only by trigger); the chat asks before any change; each member sees only the servers of their stores | `gateway/README.md`, `backend/app/agent/` |

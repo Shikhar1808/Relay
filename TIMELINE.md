@@ -3,8 +3,8 @@
 Progress against the implementation guide and the assignment brief (both kept outside the repo).
 
 - **Deadline:** 26 Oct 2026
-- **Last updated:** 20 Oct 2026
-- **Now:** the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. The Servers page is built. On k3d (18 Oct) the two Helm charts (`helm/platform`, `helm/store`) run everything, and all three servers (woo-demo, risk, fulfilment) show Connected. NetworkPolicies are in and tested: only the gateway reaches the store MCP servers, and only fulfilment-mcp from a store namespace reaches Postgres. `values-prod.yaml` is written for the VPS. Stores are now made from the dashboard (20 Oct, branch `feat/multi-store`): the store worker installs `helm/store` per store and registers its server; `second` was made on k3d and is ready, with `woo-second` Connected. Isolation between the two stores checked from inside the pods. Next: the rest of the bonus checks (two stores at once, recovery, delete), then the VPS (k3s, DNS, cert-manager)
+- **Last updated:** 24 Oct 2026
+- **Now:** Prometheus and Grafana are in (24 Oct): the gateway counts and times every tool call per server, the backend reports stores by status, Grafana (admin login only) shows a six-panel dashboard, checked on k3d including a killed pod; see `refernces/monitoring.md`. Before that, the chat agent is built: a LangGraph graph in the backend that answers by calling tools through the gateway as the signed-in user, checked live against Groq and in a headless browser. It answers each message in one piece (no streaming). It reaches Groq directly; the LLM gateway in front of it is not built. The Servers page is built. On k3d (18 Oct) the two Helm charts (`helm/platform`, `helm/store`) run everything, and all three servers (woo-demo, risk, fulfilment) show Connected. NetworkPolicies are in and tested: only the gateway reaches the store MCP servers, and only fulfilment-mcp from a store namespace reaches Postgres. `values-prod.yaml` is written for the VPS. Stores are now made from the dashboard (20 Oct, branch `feat/multi-store`): the store worker installs `helm/store` per store and registers its server; `second` was made on k3d and is ready, with `woo-second` Connected. Isolation between the two stores checked from inside the pods. Next: the rest of the bonus checks (two stores at once, recovery, delete), then the VPS (k3s, DNS, cert-manager)
 
 Tick an item only when it is built and checked. Update "Last updated" and "Now" with every change.
 
@@ -121,6 +121,7 @@ Moved ahead of the bonus on 12 Oct: these are graded, the bonus is optional.
 - [x] Per-role tool permissions (20 Oct): each server has `admin_only_tools`; the gateway hides them from a member's list and refuses a direct call with the same "Unknown tool", recorded as `denied` with the real server and tool; the admin toggles them on the Servers page; WooCommerce's three write tools start locked on every store. Checked on the Compose stack end to end (list, refused call, audit row, unlock without a restart); the k3d check comes after the image upgrade
 - [ ] Prompt injection check on tool descriptions
 - [ ] Audit log heatmap
+- [x] Observability: Prometheus + Grafana (24 Oct): `/metrics` on the gateway's private port and `/internal/metrics` on the backend, each behind a read-only `METRICS_TOKEN`; plain manifests in `helm/platform` (not kube-prometheus-stack); Grafana is the only way in (own admin login, no anonymous access or sign-up), Prometheus has no Ingress. Checked on k3d: both targets UP, counts match the calls made, `relay_upstream_up{risk}` went 0 within 12 s of scaling risk-mcp to zero and back to 1 in about 36 s, NetworkPolicies refuse every other pod, `/internal/metrics` is 403 through the Ingress, Prometheus keeps its data across a restart
 - [x] Confirmation step for write tools in chat: a write waits for a yes or no, one question for all the writes in a reply; a tool with no hints counts as a write (13 Oct)
 
 ## Oct 25–26: Polish, docs, video
@@ -197,7 +198,7 @@ Everything that was left out on purpose, with what exists today. None of it is n
 - **Detail level per category.** `AUDIT_DETAIL` is one setting for every tool call.
 - **A quieter level for routine events.** Listing tools and successful sign-ins are not recorded. A DEBUG level with a minimum-level setting would allow them without noise.
 - **A request id** on each row, to match it with the gateway's and the upstream's own logs.
-- **Metrics** (`/metrics` on the private port: calls, errors, durations, queue size). Left out because nothing scrapes them yet.
+- **Metrics beyond the first set.** Built 24 Oct: calls, errors, durations, server up and refusals (see "Monitoring" below). Not built: a queue size (audit writes are synchronous, so there is no queue; `relay_audit_write_failures_total` is the nearest signal).
 - **A break-glass switch.** Registry changes are refused while the audit log cannot record them. So an upstream cannot be disabled during such an outage.
 - **Outbox table for admin events.** Write the event into the Platform DB in the same transaction as the change, and deliver it to the gateway in the background. That closes the last gap (the backend dies between recording a change and committing it, so no `failed` event is sent). It costs a table, a delivery loop with retries and duplicate handling in the gateway, and it gives up "no change while the audit log is down".
 
@@ -256,6 +257,18 @@ Basic version built 11 Oct: the gateway compares each registry read with the las
 - **Docker Compose has no worker,** so stores made there stay pending.
 - **Upgrading stores made on the dashboard** is by hand, one `helm upgrade --reset-then-reuse-values` per store (README, "Upgrade and roll back"); nothing rolls a chart change out to them, and the worker image carries its own copy of the chart.
 
+### Monitoring
+
+Built 24 Oct: plain Prometheus and Grafana in `helm/platform`, metrics from the gateway and the backend only. What was left out on purpose:
+
+- **Grafana behind the platform's own login.** It has its own `admin` account, so "admin only" means the Grafana admin, not a platform admin. To build: Traefik ForwardAuth to a small backend route that answers 200 for an admin session, and Grafana's `auth.proxy` mode.
+- **Alerts.** No Alertmanager and no rules; the dashboard has to be looked at. Start with `relay_upstream_up == 0` for two minutes.
+- **Cluster metrics** (CPU and memory per pod, restarts): needs kube-state-metrics and cAdvisor, which is what kube-prometheus-stack brings. See `refernces/monitoring.md` for why it was not used.
+- **Metrics from the MCP servers and the store worker.** The gateway already times every call per server; the worker has no HTTP port.
+- **Several gateway replicas.** `gateway:9090` is a Service, so a scrape reaches one pod. Scrape pods by a headless Service (DNS discovery) and sum in the query.
+- **Rotating `METRICS_TOKEN`.** Change the Secret, restart gateway, backend and Prometheus.
+- **Dashboards are provisioned from a file**, so editing one in the Grafana page is lost on restart; change `helm/platform/files/relay-dashboard.json`.
+
 ### Tests and housekeeping
 
 - **A throwaway database for the end-to-end tests.** Each run leaves members, stores and audit rows in the dev database; with `SMTP_PASSWORD` set it sends real emails to made-up addresses, and with `GROQ_API_KEY` set its chat messages reach the model (`SMTP_PASSWORD= GROQ_API_KEY= ./run_tests.sh all` avoids both).
@@ -296,7 +309,7 @@ Each of these has a `shortcut:` comment where it lives, saying when to upgrade.
 - Local Kubernetes: k3d (13 Oct), the same distribution as a k3s VPS.
 - Deleting a store asks for its name again and a reason, and both are recorded.
 - A store that already exists is never created a second time. Registering it again connects to the one that is there; on Kubernetes its pods are started again if they are down, and its data is kept. Only an explicit delete removes a store's pods. Built on 12 Oct for the registry (the first store and its server are left as they are when they already exist), and on 20 Oct for the cluster: every worker step is safe to repeat.
-- Servers 2 and 3 are Risk check and Fulfilment (16 Oct; Product photos was chosen first and dropped the same day, when no image provider would issue a key). Both are ours, written like `woo-mcp`, and registered by hand as the admin, which is also the demo's "add a server by URL and credential" step. Fulfilment keeps its records in the platform's Postgres, in a database and role of its own, not in a third database engine. On hold until said otherwise: Prometheus and Grafana.
+- Servers 2 and 3 are Risk check and Fulfilment (16 Oct; Product photos was chosen first and dropped the same day, when no image provider would issue a key). Both are ours, written like `woo-mcp`, and registered by hand as the admin, which is also the demo's "add a server by URL and credential" step. Fulfilment keeps its records in the platform's Postgres, in a database and role of its own, not in a third database engine. Prometheus and Grafana were on hold until 24 Oct; now built (see "Monitoring" under Future expansion).
 
 
 ## Keys
@@ -321,6 +334,10 @@ Generated once, kept in .env
 │ GATEWAY_ENCRYPTION_KEY                 │ base64(os.urandom(32))                                     │ 256 bits, the AES-256 key │
 ├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
 │ GATEWAY_DB_PASSWORD                    │ 48 hex characters, because it sits inside a connection URL │ 192 bits                  │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ METRICS_TOKEN                          │ secrets.token_urlsafe(48)                                  │ 384 bits                  │
+├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
+│ GRAFANA_ADMIN_PASSWORD                 │ secrets.token_urlsafe(12)                                  │ 96 bits                   │
 ├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
 │ RISK_MCP_TOKEN, FULFILMENT_MCP_TOKEN   │ secrets.token_urlsafe(48)                                  │ 384 bits                  │
 ├────────────────────────────────────────┼────────────────────────────────────────────────────────────┼───────────────────────────┤
